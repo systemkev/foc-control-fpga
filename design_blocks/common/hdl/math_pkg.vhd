@@ -20,13 +20,11 @@ package body math_pkg is
         end if;
     end function log_2_ceil_real;
 
-    function log_2_ceil (n: real) return integer is 
-    begin 
-        -- Guard against 0 or negative inputs
-        if n <= 0.0 then
+    function log_2_ceil (n: integer) return integer is
+    begin
+        if n <= 0 then
             return 0;
         else
-            -- ceil returns a real, so we safely convert it to an integer
             return integer(ceil(log2(real(n))));
         end if;
     end function log_2_ceil;

@@ -19,7 +19,7 @@ pwm_gen u_pwm_gen (
     .i_rst              (rst),
     .i_duty             (duty),
     .o_pwm              (pwm),
-    .o_pwm_first_cyc    (pwm_start)
+    .o_pwm_is_first_cycle (pwm_start)
 );
 
 always begin 
@@ -40,7 +40,7 @@ initial begin
     rst   = 0;
     #(C_CLK_PRD_NS * 3);
 
-    run_test(100.0);
+    run_test(25.0);
 
     #(C_PWM_PRD_NS * 10);
 
