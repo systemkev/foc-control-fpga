@@ -12,7 +12,7 @@ entity cordic is
         i_clk           : in std_logic;
         i_rst           : in std_logic;
         
-        -- BAM 16-bit angle: -32768 = -180 deg, +32767 = +179.99 deg.
+        -- 16-bit angle: -32768 = -180 deg, +32767 = +179.99 deg.
         i_angle         : in signed(15 downto 0);             
         i_vld           : in std_logic;                         
         

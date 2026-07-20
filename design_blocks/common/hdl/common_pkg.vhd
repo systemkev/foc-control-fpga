@@ -1,6 +1,6 @@
-library ieee;
-use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
 
 package common_pkg is 
     constant C_CLK_FREQ             : real      := 50.0e6;      -- 50 Mhz clock 
