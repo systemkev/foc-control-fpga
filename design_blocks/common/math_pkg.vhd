@@ -4,6 +4,9 @@ use IEEE.numeric_std.all;
 use IEEE.math_real.all;
 
 package math_pkg is 
+    constant C_CORDIC_NUM_OF_ITERS  : integer   := 20;
+    constant C_CORDIC_LATENCY       : integer   := C_CORDIC_NUM_OF_ITERS+2;
+
     function log_2_ceil_real (n: real) return integer;
     function log_2_ceil (n: integer) return integer;
 end package math_pkg;

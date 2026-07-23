@@ -4,10 +4,10 @@ use IEEE.numeric_std.all;
 use IEEE.math_real.all;
 use IEEE.fixed_pkg.all;
 
+library work;
+use work.math_pkg.all;
+
 entity cordic is
-    generic (
-        C_NUM_OF_ITER   : integer := 20
-    );
     port (
         i_clk           : in std_logic;
         i_rst           : in std_logic;
@@ -24,7 +24,7 @@ entity cordic is
 end entity cordic;
 
 architecture rtl of cordic is 
-    type t_arctan_table is array(0 to C_NUM_OF_ITER-1) of signed(15 downto 0);
+    type t_arctan_table is array(0 to C_CORDIC_NUM_OF_ITERS-1) of signed(15 downto 0);
 
     function init_arctan_table return t_arctan_table is
         variable v_arctan_table : t_arctan_table;
@@ -42,8 +42,8 @@ architecture rtl of cordic is
     signal r_state          : t_state := S_IDLE;
     signal w_next_state     : t_state;
 
-    signal r_counter        : integer range 0 to C_NUM_OF_ITER-1;
-    signal w_next_counter   : integer range 0 to C_NUM_OF_ITER-1;
+    signal r_counter        : integer range 0 to C_CORDIC_NUM_OF_ITERS-1;
+    signal w_next_counter   : integer range 0 to C_CORDIC_NUM_OF_ITERS-1;
 
     signal r_x_rotater      : sfixed(1 downto -19);
     signal r_y_rotater      : sfixed(1 downto -19);
@@ -56,25 +56,10 @@ architecture rtl of cordic is
 begin 
     o_rdy <= '1' when r_state = S_IDLE else '0';
 
-    preprocess_angle : process(all)
-    begin
-        -- XOR evaluates to '1' when the bits are different (Q2 or Q3)
-        w_inv_start <= i_angle(15) xor i_angle(14);
-            
-        if (i_angle(15) xor i_angle(14)) = '1' then   
-            -- We are in Q2 or Q3. 
-            -- Throw away bit 15 and sign-extend bit 14 to map it back to Q1/Q4
-            w_angl_err_start <= resize(i_angle(14 downto 0), 16);
-        else
-            -- We are in Q1 or Q4. The angle is already valid
-            w_angl_err_start <= i_angle;
-        end if;
-    end process preprocess_angle;
-    
     fsm : process(i_clk)
     begin 
         if rising_edge(i_clk) then 
-            if i_rst then 
+            if i_rst = '1' then 
                 r_state     <= S_IDLE;
                 r_counter   <= 0;
             else 
@@ -92,13 +77,13 @@ begin
         case r_state is 
             when S_IDLE =>
                 w_next_counter  <= 0;
-                if i_vld then 
+                if i_vld = '1' then 
                     w_next_state    <= S_ITERATE;
                 else 
                     w_next_state    <= S_IDLE;
                 end if;
             when S_ITERATE => 
-                if r_counter = C_NUM_OF_ITER-1 then
+                if r_counter = C_CORDIC_NUM_OF_ITERS-1 then
                     w_next_state    <= S_DONE;
                 else 
                     w_next_counter  <= r_counter+1;
@@ -108,12 +93,27 @@ begin
         end case;
     end process fsm_advance;
 
+    preprocess_angle : process(all)
+    begin
+        -- XOR evaluates to '1' when the bits are different (Q2 or Q3)
+        w_inv_start <= i_angle(15) xor i_angle(14);
+            
+        if (i_angle(15) xor i_angle(14)) = '1' then   
+            -- We are in Q2 or Q3. 
+            -- Throw away bit 15 and sign-extend bit 14 to map it back to Q1/Q4
+            w_angl_err_start <= resize(i_angle(14 downto 0), 16);
+        else
+            -- We are in Q1 or Q4. The angle is already valid
+            w_angl_err_start <= i_angle;
+        end if;
+    end process preprocess_angle;
+
     cordic_iteration : process(i_clk)
         variable v_x_shift : sfixed(1 downto -19);
         variable v_y_shift : sfixed(1 downto -19);
     begin 
         if rising_edge(i_clk) then
-            if i_rst then 
+            if i_rst = '1' then 
                 r_x_rotater         <= (others => '0');
                 r_y_rotater         <= (others => '0');
                 r_angle_error       <= (others => '0');
@@ -149,7 +149,7 @@ begin
     drive_output : process(i_clk) 
     begin 
         if rising_edge(i_clk) then
-            if i_rst then 
+            if i_rst = '1' then 
                 o_vld   <= '0';
                 o_cos   <= (others => '0');
                 o_sin   <= (others => '0');

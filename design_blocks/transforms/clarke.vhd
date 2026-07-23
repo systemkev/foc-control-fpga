@@ -15,6 +15,8 @@ entity clarke is
         -- Valid range [-5A, 5A], Q3.12
         i_phases    : in t_phase_record;
 
+        -- Output from the Clarke transformation
+        -- Valid range [-5A, 5A], Q3.12
         o_clarke    : out t_clarke_record
     );
 end entity clarke;
@@ -28,9 +30,9 @@ architecture rtl of clarke is
     constant C_CLARKE_MTRX_12   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_12, 0, -15);
     
     signal r_input_phases       : t_phase_record;
-    signal r_clarke_res         : t_clarke_record;
+    signal r_output_clarke      : t_clarke_record;
 begin
-    o_clarke <= r_clarke_res;
+    o_clarke <= r_output_clarke;
 
     sample_input : process(i_clk)
     begin
@@ -64,9 +66,9 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                r_clarke_res.alpha  <= to_sfixed(0.0, r_clarke_res.alpha);
-                r_clarke_res.beta   <= to_sfixed(0.0, r_clarke_res.beta);
-                r_clarke_res.vld    <= '0';
+                r_output_clarke.alpha   <= to_sfixed(0.0, r_output_clarke.alpha);
+                r_output_clarke.beta    <= to_sfixed(0.0, r_output_clarke.beta);
+                r_output_clarke.vld     <= '0';
             elsif r_input_phases.vld = '1' then
                 v_ph_A_mult_row0    := r_input_phases.A * C_CLARKE_MTRX_00;
                 v_ph_B_mult_row0    := r_input_phases.B * C_CLARKE_MTRX_01;
@@ -94,11 +96,11 @@ begin
                     v_beta  := resize(v_beta_raw, v_beta);
                 end if;
 
-                r_clarke_res.alpha  <= v_alpha;
-                r_clarke_res.beta   <= v_beta;
-                r_clarke_res.vld    <= '1';
+                r_output_clarke.alpha   <= v_alpha;
+                r_output_clarke.beta    <= v_beta;
+                r_output_clarke.vld     <= '1';
             else
-                r_clarke_res.vld    <= '0';
+                r_output_clarke.vld     <= '0';
             end if;
         end if;
     end process calc_clarke;
