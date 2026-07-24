@@ -37,12 +37,9 @@ package cloop_pkg is
     -- Inverse Clarke transform constants
     constant C_CLARKE_INV_MX_00 : real := 1.0;
     constant C_CLARKE_INV_MX_01 : real := 0.0;
-    constant C_CLARKE_INV_MX_02 : real := 1.0;
     constant C_CLARKE_INV_MX_10 : real := -1.0 / 2.0;
     constant C_CLARKE_INV_MX_11 : real := sqrt(3.0)/2.0;
-    constant C_CLARKE_INV_MX_12 : real := 1;
     constant C_CLARKE_INV_MX_20 : real := -1.0 / 2.0;
     constant C_CLARKE_INV_MX_21 : real := -sqrt(3.0)/2.0;
-    constant C_CLARKE_INV_MX_22 : real := 1;
 
 end package cloop_pkg;

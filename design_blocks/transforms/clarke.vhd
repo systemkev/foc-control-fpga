@@ -17,7 +17,6 @@ entity clarke is
 
         -- Output from the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
-        o_rdy       : out std_logic;
         o_clarke    : out t_clarke_record
     );
 end entity clarke;
@@ -33,7 +32,6 @@ architecture rtl of clarke is
     signal r_input_phases       : t_phase_record;
     signal r_output_clarke      : t_clarke_record;
 begin
-    o_rdy <= '1' when r_current_state = ST_IDLE else '0';
     o_clarke <= r_output_clarke;
 
     sample_input : process(i_clk)

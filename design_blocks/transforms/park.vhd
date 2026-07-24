@@ -25,16 +25,14 @@ architecture rtl of park is
     signal r_input_clarke       : t_clarke_record;
     signal r_input_angle        : signed(15 downto 0);
 
-    signal w_cordic_start       : std_logic;
+    signal r_cordic_start       : std_logic;
     signal w_cordic_vld         : std_logic;
     signal w_cordic_cos         : sfixed(1 downto -14);
     signal w_cordic_sin         : sfixed(1 downto -14);
     signal w_cordic_rdy         : std_logic;
 
-    signal r_cordic_vld         : std_logic;
     signal r_cordic_cos         : sfixed(1 downto -14);
     signal r_cordic_sin         : sfixed(1 downto -14);
-    signal r_cordic_rdy         : std_logic;
 
     -- Park transformation intermediates
     signal r_id_ia_term         : sfixed(5 downto -26);
@@ -57,12 +55,7 @@ architecture rtl of park is
     signal r_current_state      : t_park_states;
     signal w_next_state         : t_park_states;
 begin
-    o_rdy <= '1' when r_current_state = ST_IDLE else '0';
-
-    w_cordic_start <= '1' when (r_current_state = ST_IDLE 
-                            and i_clarke.vld = '1' 
-                            and w_cordic_rdy = '1') 
-                        else '0';
+    o_rdy <= '1' when r_current_state = ST_IDLE and w_cordic_rdy = '1' else '0';
 
     fsm : process(i_clk)
     begin 
@@ -104,7 +97,7 @@ begin
             i_clk       => i_clk,
             i_rst       => i_rst,
             i_angle     => r_input_angle,
-            i_vld       => w_cordic_start,
+            i_vld       => r_cordic_start,
             o_vld       => w_cordic_vld,
             o_cos       => w_cordic_cos,
             o_sin       => w_cordic_sin,
@@ -122,6 +115,9 @@ begin
             elsif i_clarke.vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
                 r_input_clarke      <= i_clarke;
                 r_input_angle       <= i_angle;
+                r_cordic_start      <= '1';
+            else
+                r_cordic_start      <= '0';
             end if;
         end if;
     end process register_input;
@@ -130,16 +126,12 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                r_cordic_vld        <= '0';
                 r_cordic_cos        <= (others => '0');
                 r_cordic_sin        <= (others => '0');
-                r_cordic_rdy        <= '0';
             elsif r_current_state = ST_FETCH then
                 if w_cordic_vld = '1' then
-                    r_cordic_vld    <= '1';
                     r_cordic_cos    <= w_cordic_cos;
                     r_cordic_sin    <= w_cordic_sin;
-                    r_cordic_rdy    <= w_cordic_rdy;
                 end if;
             end if;
         end if;

@@ -27,10 +27,10 @@ architecture rtl of park_inverse is
 
     signal w_cordic_start       : std_logic;
     signal w_cordic_vld         : std_logic;
+    signal w_cordic_rdy         : std_logic;
     signal w_cordic_cos         : sfixed(1 downto -14);
     signal w_cordic_sin         : sfixed(1 downto -14);
 
-    signal r_cordic_vld         : std_logic;
     signal r_cordic_cos         : sfixed(1 downto -14);
     signal r_cordic_sin         : sfixed(1 downto -14);
 
@@ -59,8 +59,9 @@ begin
         port map (
             i_clk       => i_clk,
             i_rst       => i_rst,
-            i_angle     => r_input_angle,
             i_vld       => w_cordic_start,
+            o_rdy       => w_cordic_rdy,
+            i_angle     => r_input_angle,
             o_vld       => w_cordic_vld,
             o_cos       => w_cordic_cos,
             o_sin       => w_cordic_sin        
@@ -128,16 +129,12 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                r_cordic_vld        <= '0';
                 r_cordic_cos        <= (others => '0');
                 r_cordic_sin        <= (others => '0');
-                r_cordic_rdy        <= '0';
             elsif r_current_state = ST_FETCH then
                 if w_cordic_vld = '1' then
-                    r_cordic_vld    <= '1';
                     r_cordic_cos    <= w_cordic_cos;
                     r_cordic_sin    <= w_cordic_sin;
-                    r_cordic_rdy    <= w_cordic_rdy;
                 end if;
             end if;
         end if;
@@ -190,7 +187,9 @@ begin
                                 alpha => r_alpha_inv_park, 
                                 beta  => r_beta_inv_park);
             else 
-                o_inv_park.vld <= '0';
+                o_inv_park  <= (vld   => '0', 
+                                alpha => (others => '0'), 
+                                beta  => (others => '0'));
             end if;
         end if;
     end process drive_output;
