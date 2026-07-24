@@ -11,6 +11,8 @@ entity park is
 
         i_clarke    : in t_clarke_record;
         i_angle     : in signed(15 downto 0);
+
+        o_rdy       : out std_logic;
         o_park      : out t_park_record
     );
 end entity park;
@@ -55,6 +57,8 @@ architecture rtl of park is
     signal r_current_state      : t_park_states;
     signal w_next_state         : t_park_states;
 begin
+    o_rdy <= '1' when r_current_state = ST_IDLE else '0';
+
     w_cordic_start <= '1' when (r_current_state = ST_IDLE 
                             and i_clarke.vld = '1' 
                             and w_cordic_rdy = '1') 

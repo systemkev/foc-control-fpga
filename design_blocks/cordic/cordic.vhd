@@ -12,18 +12,22 @@ entity cordic is
         i_clk           : in std_logic;
         i_rst           : in std_logic;
         
+        -- Handshake signals
+        i_vld           : in std_logic;                         
+        o_rdy           : out std_logic;                        
+        
         -- 16-bit angle: -32768 = -180 deg, +32767 = +179.99 deg.
         i_angle         : in signed(15 downto 0);             
-        i_vld           : in std_logic;                         
         
+        -- Outputs
         o_vld           : out std_logic;                        
         o_cos           : out sfixed(1 downto -14);             -- Q1.14 cos output
-        o_sin           : out sfixed(1 downto -14);             -- Q1.14 sin output
-        o_rdy           : out std_logic                         
+        o_sin           : out sfixed(1 downto -14)              -- Q1.14 sin output    
     );
 end entity cordic;
 
 architecture rtl of cordic is 
+    -- Pre-computed Arctan Table
     type t_arctan_table is array(0 to C_CORDIC_NUM_OF_ITERS-1) of signed(15 downto 0);
 
     function init_arctan_table return t_arctan_table is
@@ -36,139 +40,106 @@ architecture rtl of cordic is
     end function init_arctan_table;
 
     constant C_ARCTAN_TABLE : t_arctan_table := init_arctan_table;
+    constant C_CORDIC_GAIN  : real := 0.607253;
 
-    type t_state is (S_IDLE, S_ITERATE, S_DONE);
+    type t_state is (ST_IDLE, ST_ITERATE, ST_DONE);
+    signal r_state, w_next_state : t_state;
 
-    signal r_state          : t_state := S_IDLE;
-    signal w_next_state     : t_state;
+    -- Status from Datapath to FSM
+    signal w_iter_done  : std_logic;
 
-    signal r_counter        : integer range 0 to C_CORDIC_NUM_OF_ITERS-1;
-    signal w_next_counter   : integer range 0 to C_CORDIC_NUM_OF_ITERS-1;
-
-    signal r_x_rotater      : sfixed(1 downto -19);
-    signal r_y_rotater      : sfixed(1 downto -19);
-
-    signal r_angle_error    : signed(15 downto 0);
-    signal w_angl_err_start : signed(15 downto 0);
+    signal r_iter       : integer range 0 to C_CORDIC_NUM_OF_ITERS;
+    signal r_x          : sfixed(1 downto -19);
+    signal r_y          : sfixed(1 downto -19);
+    signal r_z          : signed(15 downto 0);
+    signal r_inv        : std_logic;
 
     signal w_inv_start      : std_logic;
-    signal r_inv_output     : std_logic;
+    signal w_angl_err_start : signed(15 downto 0);
+
 begin 
-    o_rdy <= '1' when r_state = S_IDLE else '0';
+    -- Combinational quadrant mapping (folds Q2 and Q3 into Q1 and Q4)
+    w_inv_start         <= i_angle(15) xor i_angle(14);
+    w_angl_err_start    <= resize(i_angle(14 downto 0), 16) when w_inv_start = '1' else i_angle;
+
+    w_iter_done         <= '1' when r_iter = C_CORDIC_NUM_OF_ITERS-1 else '0';
 
     fsm : process(i_clk)
-    begin 
-        if rising_edge(i_clk) then 
+    begin
+        if rising_edge(i_clk) then
             if i_rst = '1' then 
-                r_state     <= S_IDLE;
-                r_counter   <= 0;
-            else 
-                r_state     <= w_next_state;
-                r_counter   <= w_next_counter;
+                r_state <= ST_IDLE;
+            else
+                r_state <= w_next_state;
             end if;
         end if;
     end process fsm;
 
     fsm_advance : process(all)
-    begin 
-        w_next_state        <= r_state;
-        w_next_counter      <= r_counter;
+    begin
+        -- Default assignments to prevent latches
+        w_next_state <= r_state;
+        o_rdy        <= '0';
 
         case r_state is 
-            when S_IDLE =>
-                w_next_counter  <= 0;
-                if i_vld = '1' then 
-                    w_next_state    <= S_ITERATE;
-                else 
-                    w_next_state    <= S_IDLE;
+            when ST_IDLE =>
+                o_rdy <= '1';
+                if i_vld = '1' then
+                    w_next_state <= ST_ITERATE;
                 end if;
-            when S_ITERATE => 
-                if r_counter = C_CORDIC_NUM_OF_ITERS-1 then
-                    w_next_state    <= S_DONE;
-                else 
-                    w_next_counter  <= r_counter+1;
+
+            when ST_ITERATE =>
+                if w_iter_done = '1' then
+                    w_next_state <= ST_DONE;
                 end if;
-            when others =>          -- This include S_DONE
-                w_next_state        <= S_IDLE;
+
+            when ST_DONE =>
+                w_next_state <= ST_IDLE;
         end case;
     end process fsm_advance;
 
-    preprocess_angle : process(all)
+    datapath : process(i_clk)
+        variable v_x_shift  : sfixed(1 downto -19);
+        variable v_y_shift  : sfixed(1 downto -19);
     begin
-        -- XOR evaluates to '1' when the bits are different (Q2 or Q3)
-        w_inv_start <= i_angle(15) xor i_angle(14);
-            
-        if (i_angle(15) xor i_angle(14)) = '1' then   
-            -- We are in Q2 or Q3. 
-            -- Throw away bit 15 and sign-extend bit 14 to map it back to Q1/Q4
-            w_angl_err_start <= resize(i_angle(14 downto 0), 16);
-        else
-            -- We are in Q1 or Q4. The angle is already valid
-            w_angl_err_start <= i_angle;
-        end if;
-    end process preprocess_angle;
-
-    cordic_iteration : process(i_clk)
-        variable v_x_shift : sfixed(1 downto -19);
-        variable v_y_shift : sfixed(1 downto -19);
-    begin 
         if rising_edge(i_clk) then
-            if i_rst = '1' then 
-                r_x_rotater         <= (others => '0');
-                r_y_rotater         <= (others => '0');
-                r_angle_error       <= (others => '0');
-                r_inv_output        <= '0';
-            else 
-                v_x_shift := shift_right(r_x_rotater, r_counter);
-                v_y_shift := shift_right(r_y_rotater, r_counter);
+            o_vld       <= '0';
 
-                case r_state is 
-                    when S_IDLE => 
-                        r_x_rotater     <= to_sfixed(0.607253, r_x_rotater);
-                        r_y_rotater     <= to_sfixed(0.0, r_y_rotater);
-                        r_angle_error   <= w_angl_err_start;
-                        r_inv_output    <= w_inv_start;
-                    when S_ITERATE => 
-                        if r_angle_error >= 0 then
-                            r_x_rotater     <= resize(r_x_rotater - v_y_shift, r_x_rotater);
-                            r_y_rotater     <= resize(r_y_rotater + v_x_shift, r_y_rotater);
-                            r_angle_error   <= r_angle_error - C_ARCTAN_TABLE(r_counter);
-                        else 
-                            r_x_rotater     <= resize(r_x_rotater + v_y_shift, r_x_rotater);
-                            r_y_rotater     <= resize(r_y_rotater - v_x_shift, r_y_rotater);
-                            r_angle_error   <= r_angle_error + C_ARCTAN_TABLE(r_counter);
-                        end if;
-                
-                    when others => null;
+            if r_state = ST_IDLE and w_next_state = ST_ITERATE then 
+                r_x     <= to_sfixed(C_CORDIC_GAIN, r_x);
+                r_y     <= to_sfixed(0.0, r_y);
+                r_z     <= w_angl_err_start;
+                r_inv   <= w_inv_start;
+                r_iter  <= 0;
 
-                end case;
-            end if;
-        end if;
-    end process cordic_iteration;
+            elsif r_state = ST_ITERATE then
+                -- Calculation phase
+                v_x_shift := shift_right(r_x, r_iter);
+                v_y_shift := shift_right(r_y, r_iter);
 
-    drive_output : process(i_clk) 
-    begin 
-        if rising_edge(i_clk) then
-            if i_rst = '1' then 
-                o_vld   <= '0';
-                o_cos   <= (others => '0');
-                o_sin   <= (others => '0');
-            else
-                o_vld   <= '0';
+                if r_z >= 0 then 
+                    r_x <= resize(r_x - v_y_shift, r_x);
+                    r_y <= resize(r_y + v_x_shift, r_y);
+                    r_z <= resize(r_z - C_ARCTAN_TABLE(r_iter), r_z);
+                else 
+                    r_x <= resize(r_x + v_y_shift, r_x);
+                    r_y <= resize(r_y - v_x_shift, r_y);
+                    r_z <= resize(r_z + C_ARCTAN_TABLE(r_iter), r_z);
+                end if;
+                r_iter <= r_iter + 1;
 
-                if r_state = S_DONE then
-                    o_vld   <= '1';
+            elsif r_state = ST_DONE then
+                -- Output phase with quadrant correction
+                o_vld <= '1';
 
-                    -- Truncate to Q1.14 and apply quadrant inversion if needed
-                    if r_inv_output = '1' then
-                        o_cos <= resize(-r_x_rotater, o_cos);
-                        o_sin <= resize(-r_y_rotater, o_sin);
-                    else
-                        o_cos <= resize(r_x_rotater, o_cos);
-                        o_sin <= resize(r_y_rotater, o_sin);
-                    end if;
+                if r_inv = '1' then
+                    o_cos <= resize(-r_x, o_cos);
+                    o_sin <= resize(-r_y, o_sin);
+                else
+                    o_cos <= resize(r_x, o_cos);
+                    o_sin <= resize(r_y, o_sin);
                 end if;
             end if;
         end if;
-    end process drive_output;
+    end process datapath;
 end architecture rtl;

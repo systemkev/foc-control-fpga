@@ -12,6 +12,7 @@ entity park_inverse is
         i_angle     : in signed(15 downto 0);
         i_park      : in t_park_record;
 
+        o_rdy       : out std_logic;
         o_inv_park  : out t_clarke_record
     );
 end entity park_inverse;
@@ -28,12 +29,10 @@ architecture rtl of park_inverse is
     signal w_cordic_vld         : std_logic;
     signal w_cordic_cos         : sfixed(1 downto -14);
     signal w_cordic_sin         : sfixed(1 downto -14);
-    signal w_cordic_rdy         : std_logic;
 
     signal r_cordic_vld         : std_logic;
     signal r_cordic_cos         : sfixed(1 downto -14);
     signal r_cordic_sin         : sfixed(1 downto -14);
-    signal r_cordic_rdy         : std_logic;
 
     -- Corrected Inverse Park transformation intermediates
     signal r_d_cos_term         : sfixed(5 downto -26);
@@ -64,10 +63,10 @@ begin
             i_vld       => w_cordic_start,
             o_vld       => w_cordic_vld,
             o_cos       => w_cordic_cos,
-            o_sin       => w_cordic_sin,
-            o_rdy       => w_cordic_rdy
+            o_sin       => w_cordic_sin        
         );
 
+    o_rdy <= '1' when r_current_state = ST_IDLE else '0';
     w_cordic_start <= '1' when (r_current_state = ST_IDLE 
                             and i_park.vld = '1' 
                             and w_cordic_rdy = '1') 
