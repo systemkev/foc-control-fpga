@@ -10,10 +10,10 @@ entity park_inverse is
         i_rst       : in std_logic;
 
         i_angle     : in signed(15 downto 0);
-        i_park      : in t_park_record;
+        i_park      : in t_dq_phase;
 
         o_rdy       : out std_logic;
-        o_inv_park  : out t_clarke_record
+        o_inv_park  : out t_ab_phase
     );
 end entity park_inverse;
 
@@ -22,7 +22,7 @@ architecture rtl of park_inverse is
     --      V_alpha = V_d * cos(theta) - V_q * sin(theta)
     --      V_beta  = V_d * sin(theta) + V_q * cos(theta)
 
-    signal r_input_park         : t_park_record;
+    signal r_input_park         : t_dq_phase;
     signal r_input_angle        : signed(15 downto 0);
 
     signal w_cordic_start       : std_logic;

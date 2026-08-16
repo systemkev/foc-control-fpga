@@ -13,41 +13,42 @@ package common_pkg is
     type t_phase_current is sfixed(3 downto -12);   -- Max value: +7.9997 Amps, Min value: -8.0000 Amps
     type t_phase_voltage is sfixed(5 downto -12);   -- Max value: +31.9997 Volts, Min value: -32.0000 Volts
 
-    type t_ph_volt_record is record 
-        vld         : std_logic;
+    type t_pwm_cnt_phase is record 
+        A           : integer range 0 to C_CLKS_IN_PWM_PRD;
+        B           : integer range 0 to C_CLKS_IN_PWM_PRD;
+        C           : integer range 0 to C_CLKS_IN_PWM_PRD;
+    end record t_pwm_cnt_phase;
+
+    type t_abc_volt is record 
         A           : t_phase_voltage;
         B           : t_phase_voltage;
         C           : t_phase_voltage;
-    end record t_ph_volt_record; 
+    end record t_abc_volt; 
 
-    type t_clarke_volt_record is record 
-        vld         : std_logic;
+    type t_ab_volt is record 
         alpha       : t_phase_voltage;
         beta        : t_phase_voltage;
-    end record t_clarke_volt_record;
+    end record t_ab_volt;
 
-    type t_park_volt_record is record 
-        vld         : std_logic;
+    type t_dq_volt is record 
         d           : t_phase_voltage;
         q           : t_phase_voltage;
+    end record t_dq_volt;
 
     -- Interface records
-    type t_phase_record is record 
-        vld         : std_logic;
+    type t_abc_phase is record 
         A           : t_phase_current;
         B           : t_phase_current;
         C           : t_phase_current;
-    end record t_phase_record;
+    end record t_abc_phase;
 
-    type t_clarke_record is record 
-        vld         : std_logic;
+    type t_ab_phase is record 
         alpha       : t_phase_current;
         beta        : t_phase_current;
-    end record t_clarke_record;
+    end record t_ab_phase;
 
-    type t_park_record is record
-        vld         : std_logic;
+    type t_dq_phase is record
         d           : t_phase_current;
         q           : t_phase_current;
-    end record t_park_record;
+    end record t_dq_phase;
 end package common_pkg;

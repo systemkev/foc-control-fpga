@@ -13,11 +13,11 @@ entity clarke_inverse is
 
         -- Input currents for the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
-        i_alpha_beta    : in t_clarke_record;
+        i_alpha_beta    : in t_ab_phase;
 
         -- Output from the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
-        o_inv_clarke    : out t_phase_record
+        o_inv_clarke    : out t_abc_phase
     );
 end entity clarke_inverse;
 
@@ -29,7 +29,7 @@ architecture rtl of clarke_inverse is
     constant C_CLARKE_INV_MTRX_20   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_20, 0, -15);
     constant C_CLARKE_INV_MTRX_21   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_21, 0, -15);
     
-    signal r_input_alpha_beta       : t_clarke_record;
+    signal r_input_alpha_beta       : t_ab_phase;
 begin
     sample_input : process(i_clk)
     begin

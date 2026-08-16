@@ -13,11 +13,11 @@ entity clarke is
 
         -- Input currents for the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
-        i_phases    : in t_phase_record;
+        i_phases    : in t_abc_phase;
 
         -- Output from the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
-        o_clarke    : out t_clarke_record
+        o_clarke    : out t_ab_phase
     );
 end entity clarke;
 
@@ -29,8 +29,8 @@ architecture rtl of clarke is
     constant C_CLARKE_MTRX_11   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_11, 0, -15);
     constant C_CLARKE_MTRX_12   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_12, 0, -15);
     
-    signal r_input_phases       : t_phase_record;
-    signal r_output_clarke      : t_clarke_record;
+    signal r_input_phases       : t_abc_phase;
+    signal r_output_clarke      : t_ab_phase;
 begin
     o_clarke <= r_output_clarke;
 

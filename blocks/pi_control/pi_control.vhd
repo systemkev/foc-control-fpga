@@ -13,14 +13,14 @@ entity pi_control is
         
         -- Input from Park transformation 
         i_vld           : in std_logic;
-        i_target_curr   : in t_park_record;
+        i_target_curr   : in t_dq_phase;
 
         -- Inputs from encoder reading of current
-        i_actual_curr   : in t_park_record;
+        i_actual_curr   : in t_dq_phase;
 
         -- Output to SVPWM
         o_vld           : out std_logic;
-        o_ph_voltage    : out t_park_volt_record;
+        o_ph_voltage    : out t_dq_volt;
 
         -- Ready for new sample 
         o_rdy           : out std_logic
@@ -39,13 +39,13 @@ architecture rtl of pi_control is
     signal r_state          : t_pi_controller_states;
     signal w_nx_state       : t_pi_controller_states;
 
-    signal r_target_curr    : t_park_record;
-    signal r_actual_curr    : t_park_record;
-    signal r_error_curr     : t_park_record;
-    signal r_gain_prop      : t_park_volt_record;
-    signal r_gain_intg      : t_park_volt_record;
-    signal r_intg_accum     : t_park_volt_record;
-    signal r_volt_next      : t_park_volt_record;
+    signal r_target_curr    : t_dq_phase;
+    signal r_actual_curr    : t_dq_phase;
+    signal r_error_curr     : t_dq_phase;
+    signal r_gain_prop      : t_dq_volt;
+    signal r_gain_intg      : t_dq_volt;
+    signal r_intg_accum     : t_dq_volt;
+    signal r_volt_next      : t_dq_volt;
 begin
     o_rdy <= '1' when r_state = ST_IDLE else '0';
 
@@ -129,7 +129,7 @@ begin
     end process gains;
 
     accumulator : process(i_clk)
-        variable v_intg_accum : t_park_volt_record;
+        variable v_intg_accum : t_dq_volt;
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
@@ -160,7 +160,7 @@ begin
     end process accumulator;
 
     output : process(i_clk)
-        variable v_output_volt : t_park_volt_record;
+        variable v_output_volt : t_dq_volt;
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
