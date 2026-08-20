@@ -119,7 +119,7 @@ begin
                     r_v_b_stg2 <= r_v_b_stg1;
                     r_v_c_stg2 <= r_v_c_stg1;
                     
-                    -- Math: V_offset = -(V_max + V_min) * 0.5
+                    -- V_offset = -(V_max + V_min) * 0.5
                     -- mult by 0.5 is equivalent to shift right by 1
                     r_v_offset_stg2 <= resize(shift_right((r_v_max_stg1 + r_v_min_stg1), 1), r_v_offset_stg2);
                 end if;
@@ -130,7 +130,7 @@ begin
                 r_vld_stg3 <= r_vld_stg2;
                 
                 if r_vld_stg2 = '1' then
-                    -- Math: V* = V + V_offset
+                    -- V* = V + V_offset
                     r_v_a_star_stg3 <= resize(r_v_a_stg2 + r_v_offset_stg2, r_v_a_star_stg3);
                     r_v_b_star_stg3 <= resize(r_v_b_stg2 + r_v_offset_stg2, r_v_b_star_stg3);
                     r_v_c_star_stg3 <= resize(r_v_c_stg2 + r_v_offset_stg2, r_v_c_star_stg3);
@@ -142,14 +142,14 @@ begin
                 o_vld <= r_vld_stg3;
                 
                 if r_vld_stg3 = '1' then
-                    -- 1) multiply the voltage by our conversion constant
-                    -- 2) convert from fixed-point to standard integer
-                    -- 3) add C_HALF_PERIOD so 0V centers perfectly at 50% duty cycle
+                    -- multiply the voltage by our conversion constant
+                    -- convert from fixed-point to standard integer
+                    -- add C_HALF_PERIOD so 0V centers perfectly at 50% duty cycle
                     v_cnt_a := to_integer(r_v_a_star_stg3 * C_V_TO_CNT) + C_HALF_PERIOD;
                     v_cnt_b := to_integer(r_v_b_star_stg3 * C_V_TO_CNT) + C_HALF_PERIOD;
                     v_cnt_c := to_integer(r_v_c_star_stg3 * C_V_TO_CNT) + C_HALF_PERIOD;
                     
-                    -- Phase A Saturation Limits
+                    -- phase A saturation limits
                     if v_cnt_a > C_CLKS_IN_PWM_PRD then
                         o_abc_cnts.A <= C_CLKS_IN_PWM_PRD;
                     elsif v_cnt_a < 0 then
@@ -158,7 +158,7 @@ begin
                         o_abc_cnts.A <= v_cnt_a;
                     end if;
                     
-                    -- Phase B Saturation Limits
+                    -- phase B saturation limits
                     if v_cnt_b > C_CLKS_IN_PWM_PRD then
                         o_abc_cnts.B <= C_CLKS_IN_PWM_PRD;
                     elsif v_cnt_b < 0 then
@@ -167,7 +167,7 @@ begin
                         o_abc_cnts.B <= v_cnt_b;
                     end if;
 
-                    -- Phase C Saturation Limits
+                    -- Phase C saturation limits
                     if v_cnt_c > C_CLKS_IN_PWM_PRD then
                         o_abc_cnts.C <= C_CLKS_IN_PWM_PRD;
                     elsif v_cnt_c < 0 then

@@ -1,0 +1,1694 @@
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\cordic\cordic.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.math_real.all;
+use IEEE.fixed_pkg.all;
+
+library work;
+use work.math_pkg.all;
+
+entity cordic is
+    port (
+        i_clk           : in std_logic;
+        i_rst           : in std_logic;
+        
+        -- Handshake signals
+        i_vld           : in std_logic;                         
+        o_rdy           : out std_logic;                        
+        
+        -- 16-bit angle: -32768 = -180 deg, +32767 = +179.99 deg.
+        i_angle         : in signed(15 downto 0);             
+        
+        -- Outputs
+        o_vld           : out std_logic;                        
+        o_cos           : out sfixed(1 downto -14);             -- Q1.14 cos output
+        o_sin           : out sfixed(1 downto -14)              -- Q1.14 sin output    
+    );
+end entity cordic;
+
+architecture rtl of cordic is 
+    -- Pre-computed Arctan Table
+    type t_arctan_table is array(0 to C_CORDIC_NUM_OF_ITERS-1) of signed(15 downto 0);
+
+    function init_arctan_table return t_arctan_table is
+        variable v_arctan_table : t_arctan_table;
+    begin 
+        for i in v_arctan_table'range loop
+            v_arctan_table(i) := to_signed(integer(round(ARCTAN(2.0 ** (-i)) / MATH_PI * (2.0**15))), 16);
+        end loop;
+        return v_arctan_table;
+    end function init_arctan_table;
+
+    constant C_ARCTAN_TABLE : t_arctan_table := init_arctan_table;
+    constant C_CORDIC_GAIN  : real := 0.607253;
+
+    type t_state is (ST_IDLE, ST_ITERATE, ST_DONE);
+    signal r_state, w_next_state : t_state;
+
+    -- Status from Datapath to FSM
+    signal w_iter_done  : std_logic;
+
+    signal r_iter       : integer range 0 to C_CORDIC_NUM_OF_ITERS;
+    signal r_x          : sfixed(1 downto -19);
+    signal r_y          : sfixed(1 downto -19);
+    signal r_z          : signed(15 downto 0);
+    signal r_inv        : std_logic;
+
+    signal w_inv_start      : std_logic;
+    signal w_angl_err_start : signed(15 downto 0);
+
+begin 
+    -- Combinational quadrant mapping (folds Q2 and Q3 into Q1 and Q4)
+    w_inv_start         <= i_angle(15) xor i_angle(14);
+    w_angl_err_start    <= resize(i_angle(14 downto 0), 16) when w_inv_start = '1' else i_angle;
+
+    w_iter_done         <= '1' when r_iter = C_CORDIC_NUM_OF_ITERS-1 else '0';
+
+    fsm : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then 
+                r_state <= ST_IDLE;
+            else
+                r_state <= w_next_state;
+            end if;
+        end if;
+    end process fsm;
+
+    fsm_advance : process(all)
+    begin
+        -- Default assignments to prevent latches
+        w_next_state <= r_state;
+        o_rdy        <= '0';
+
+        case r_state is 
+            when ST_IDLE =>
+                o_rdy <= '1';
+                if i_vld = '1' then
+                    w_next_state <= ST_ITERATE;
+                end if;
+
+            when ST_ITERATE =>
+                if w_iter_done = '1' then
+                    w_next_state <= ST_DONE;
+                end if;
+
+            when ST_DONE =>
+                w_next_state <= ST_IDLE;
+        end case;
+    end process fsm_advance;
+
+    datapath : process(i_clk)
+        variable v_x_shift  : sfixed(1 downto -19);
+        variable v_y_shift  : sfixed(1 downto -19);
+    begin
+        if rising_edge(i_clk) then
+            o_vld       <= '0';
+
+            if r_state = ST_IDLE and w_next_state = ST_ITERATE then 
+                r_x     <= to_sfixed(C_CORDIC_GAIN, r_x);
+                r_y     <= to_sfixed(0.0, r_y);
+                r_z     <= w_angl_err_start;
+                r_inv   <= w_inv_start;
+                r_iter  <= 0;
+
+            elsif r_state = ST_ITERATE then
+                -- Calculation phase
+                v_x_shift := shift_right(r_x, r_iter);
+                v_y_shift := shift_right(r_y, r_iter);
+
+                if r_z >= 0 then 
+                    r_x <= resize(r_x - v_y_shift, r_x);
+                    r_y <= resize(r_y + v_x_shift, r_y);
+                    r_z <= resize(r_z - C_ARCTAN_TABLE(r_iter), r_z);
+                else 
+                    r_x <= resize(r_x + v_y_shift, r_x);
+                    r_y <= resize(r_y - v_x_shift, r_y);
+                    r_z <= resize(r_z + C_ARCTAN_TABLE(r_iter), r_z);
+                end if;
+                r_iter <= r_iter + 1;
+
+            elsif r_state = ST_DONE then
+                -- Output phase with quadrant correction
+                o_vld <= '1';
+
+                if r_inv = '1' then
+                    o_cos <= resize(-r_x, o_cos);
+                    o_sin <= resize(-r_y, o_sin);
+                else
+                    o_cos <= resize(r_x, o_cos);
+                    o_sin <= resize(r_y, o_sin);
+                end if;
+            end if;
+        end if;
+    end process datapath;
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\cordic\cordic_pipeline.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.math_real.all;
+use IEEE.fixed_pkg.all;
+
+library work;
+use work.math_pkg.all;
+
+entity cordic_pipeline is
+    port (
+        i_clk           : in std_logic;
+        i_rst           : in std_logic;
+        
+        -- 16-bit angle: -32768 = -180 deg, +32767 = +179.99 deg.
+        i_angle         : in signed(15 downto 0);             
+        i_vld           : in std_logic;                         
+        
+        o_vld           : out std_logic;                        
+        o_cos           : out sfixed(1 downto -14);             -- Q1.14 cos output
+        o_sin           : out sfixed(1 downto -14)             -- Q1.14 sin output    
+    );
+end entity cordic_pipeline;
+
+architecture rtl of cordic_pipeline is 
+    constant C_CORDIC_GAIN : real := 0.607253;
+    
+    type t_arctan_table is array(0 to C_CORDIC_NUM_OF_ITERS-1) of signed(15 downto 0);
+
+    function init_arctan_table return t_arctan_table is
+        variable v_arctan_table : t_arctan_table;
+    begin 
+        for i in v_arctan_table'range loop
+            v_arctan_table(i) := to_signed(integer(round(ARCTAN(2.0 ** (-i)) / MATH_PI * (2.0**15))), 16);
+        end loop;
+        return v_arctan_table;
+    end function init_arctan_table;
+
+    constant C_ARCTAN_TABLE : t_arctan_table := init_arctan_table;
+
+    type t_fixed_pipe   is array(0 to C_CORDIC_NUM_OF_ITERS) of sfixed(1 downto -19);
+    type t_signed_pipe  is array(0 to C_CORDIC_NUM_OF_ITERS) of signed(15 downto 0);
+    type t_vld_pipe     is array(0 to C_CORDIC_NUM_OF_ITERS) of std_logic;
+
+    signal r_x_pipe         : t_fixed_pipe;
+    signal r_y_pipe         : t_fixed_pipe;
+    signal r_z_pipe         : t_signed_pipe;
+    signal r_inv_pipe       : t_vld_pipe;
+    signal r_vld_pipe       : t_vld_pipe;
+
+    signal w_angl_err_start : signed(15 downto 0);
+    signal w_inv_start      : std_logic;
+begin 
+    -- Combinational preprocessing 
+    w_inv_start         <= i_angle(15) xor i_angle(14);
+    w_angl_err_start    <= resize(i_angle(14 downto 0), 16) when w_inv_start = '1' else i_angle;
+
+    pipe : process(i_clk)
+        variable v_x_shift  : sfixed(1 downto -19);
+        variable v_y_shift  : sfixed(1 downto -19);
+    begin
+        if i_rst = '1' then 
+            r_vld_pipe      <= (others => '0');
+        elsif rising_edge(i_clk) then
+            r_x_pipe(0)     <= to_sfixed(C_CORDIC_GAIN, r_x_pipe(0));
+            r_y_pipe(0)     <= to_sfixed(0.0, r_y_pipe(0));
+            r_z_pipe(0)     <= w_angl_err_start;
+            r_inv_pipe(0)   <= w_inv_start;
+            r_vld_pipe(0)   <= i_vld;
+
+            for i in 0 to C_CORDIC_NUM_OF_ITERS-1 loop 
+                v_x_shift   := shift_right(r_x_pipe(i), i);
+                v_y_shift   := shift_right(r_y_pipe(i), i);
+
+                if r_z_pipe(i) >= 0 then 
+                    r_x_pipe(i+1)   <= resize(r_x_pipe(i) - v_y_shift, r_x_pipe(i+1));
+                    r_y_pipe(i+1)   <= resize(r_y_pipe(i) + v_x_shift, r_y_pipe(i+1));
+                    r_z_pipe(i+1)   <= resize(r_z_pipe(i) - C_ARCTAN_TABLE(i), r_z_pipe(i+1));
+                else 
+                    r_x_pipe(i+1)   <= resize(r_x_pipe(i) + v_y_shift, r_x_pipe(i+1));
+                    r_y_pipe(i+1)   <= resize(r_y_pipe(i) - v_x_shift, r_y_pipe(i+1));
+                    r_z_pipe(i+1)   <= resize(r_z_pipe(i) + C_ARCTAN_TABLE(i), r_z_pipe(i+1));
+                end if;
+
+                r_inv_pipe(i+1) <= r_inv_pipe(i);
+                r_vld_pipe(i+1) <= r_vld_pipe(i);
+            end loop;
+        end if;
+    end process pipe;
+
+    drive_output : process(all)
+    begin
+        o_vld <= r_vld_pipe(C_CORDIC_NUM_OF_ITERS);
+
+        if r_inv_pipe(C_CORDIC_NUM_OF_ITERS) = '1' then
+            o_cos <= resize(-r_x_pipe(C_CORDIC_NUM_OF_ITERS), o_cos);
+            o_sin <= resize(-r_y_pipe(C_CORDIC_NUM_OF_ITERS), o_sin);
+        else
+            o_cos <= resize(r_x_pipe(C_CORDIC_NUM_OF_ITERS), o_cos);
+            o_sin <= resize(r_y_pipe(C_CORDIC_NUM_OF_ITERS), o_sin);
+        end if;
+    end process drive_output;
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\packages\cloop_pkg.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.math_real.all;
+use IEEE.fixed_pkg.all;
+
+package cloop_pkg is 
+    -- Clarke transform constants
+    constant C_CLARKE_K         : real := 2.0 / 3.0;
+    constant C_CLARKE_MATRIX_00 : sfixed() := C_CLARKE_K * (1.0);
+    constant C_CLARKE_MATRIX_01 : sfixed() := C_CLARKE_K * (-0.5);
+    constant C_CLARKE_MATRIX_02 : sfixed() := C_CLARKE_K * (-0.5);
+    constant C_CLARKE_MATRIX_10 : sfixed() := C_CLARKE_K * (0.0);
+    constant C_CLARKE_MATRIX_11 : sfixed() := C_CLARKE_K * (sqrt(3.0)/2.0);
+    constant C_CLARKE_MATRIX_12 : sfixed() := C_CLARKE_K * (-sqrt(3.0)/2.0);
+
+    -- Inverse Clarke transform constants
+    constant C_CLARKE_INV_MX_00 : sfixed() := 1.0;
+    constant C_CLARKE_INV_MX_01 : sfixed() := 0.0;
+    constant C_CLARKE_INV_MX_10 : sfixed() := -1.0 / 2.0;
+    constant C_CLARKE_INV_MX_11 : sfixed() := sqrt(3.0)/2.0;
+    constant C_CLARKE_INV_MX_20 : sfixed() := -1.0 / 2.0;
+    constant C_CLARKE_INV_MX_21 : sfixed() := -sqrt(3.0)/2.0;
+
+    -- PI controller gains
+    constant C_KP_PROP_GAIN     : sfixed() := 0.0;
+    constant C_KI_INTG_GAIN     : sfixed() := 0.0;
+
+    -- Max I[n] for integral anti-windup
+    constant C_WINDUP_MAX       : sfixed(5 downto -12) := to_sfixed(C_MAX_VOLT, 5, -12);
+    
+end package cloop_pkg;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\packages\common_pkg.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.fixed_pkg.all;
+use IEEE.math_real.all;
+
+package common_pkg is 
+    -- System constants
+    constant C_CLK_FREQ             : real      := 100.0e6;      -- 50 Mhz clock 
+    constant C_PWM_FREQ             : real      := 20.0e3;      -- 20 kHz PWM frequency
+    constant C_CLKS_IN_PWM_PRD      : natural   := integer(C_CLK_FREQ / C_PWM_FREQ);
+    constant C_VBUS                 : real      := 24.0;        -- 24V bus voltage
+    constant C_MAX_VOLT             : real      := C_VBUS / sqrt(3.0);
+
+    subtype t_phase_current is sfixed(3 downto -12);   -- Max value: +7.9997 Amps, Min value: -8.0000 Amps
+    subtype t_phase_voltage is sfixed(5 downto -12);   -- Max value: +31.9997 Volts, Min value: -32.0000 Volts
+
+    type t_pwm_cnt_phase is record 
+        A           : integer range 0 to C_CLKS_IN_PWM_PRD;
+        B           : integer range 0 to C_CLKS_IN_PWM_PRD;
+        C           : integer range 0 to C_CLKS_IN_PWM_PRD;
+    end record t_pwm_cnt_phase;
+
+    type t_abc_volt is record 
+        A           : t_phase_voltage;
+        B           : t_phase_voltage;
+        C           : t_phase_voltage;
+    end record t_abc_volt; 
+
+    type t_ab_volt is record 
+        alpha       : t_phase_voltage;
+        beta        : t_phase_voltage;
+    end record t_ab_volt;
+
+    type t_dq_volt is record 
+        d           : t_phase_voltage;
+        q           : t_phase_voltage;
+    end record t_dq_volt;
+
+    -- Interface records
+    type t_abc_phase is record 
+        A           : t_phase_current;
+        B           : t_phase_current;
+        C           : t_phase_current;
+    end record t_abc_phase;
+
+    type t_ab_phase is record 
+        alpha       : t_phase_current;
+        beta        : t_phase_current;
+    end record t_ab_phase;
+
+    type t_dq_phase is record
+        d           : t_phase_current;
+        q           : t_phase_current;
+    end record t_dq_phase;
+end package common_pkg;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\packages\math_pkg.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.math_real.all;
+
+package math_pkg is 
+    constant C_CORDIC_NUM_OF_ITERS  : integer   := 20;
+    constant C_CORDIC_LATENCY       : integer   := C_CORDIC_NUM_OF_ITERS+2;
+
+    function log_2_ceil_real (n: real) return integer;
+    function log_2_ceil (n: integer) return integer;
+end package math_pkg;
+
+package body math_pkg is
+    function log_2_ceil_real (n: real) return integer is 
+    begin 
+        -- Guard against 0 or negative inputs
+        if n <= 0.0 then
+            return 0;
+        else
+            -- ceil returns a real, so we safely convert it to an integer
+            return integer(ceil(log2(n)));
+        end if;
+    end function log_2_ceil_real;
+
+    function log_2_ceil (n: integer) return integer is
+    begin
+        if n <= 0 then
+            return 0;
+        else
+            return integer(ceil(log2(real(n))));
+        end if;
+    end function log_2_ceil;
+end package body math_pkg;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\packages\spi_pkg.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+
+use work.common_pkg.all;
+
+package spi_pkg is
+    
+    constant C_READ_ANGLE_CMD   : std_logic_vector(15 downto 0) := x"CCCC";
+    constant C_CLR_ERR_FL_CMD   : std_logic_vector(15 downto 0) := x"4001";
+
+    constant C_SCLK_FREQ        : real      := 10.0e6;
+    constant C_SCLK_SWTCH_CNT   : natural   := integer(C_CLK_FREQ / C_SCLK_FREQ / 2.0); 
+    constant C_WAIT_MAX         : natural   := 5;
+    
+    type t_spi_frame is array (0 to 1) of std_logic_vector(15 downto 0);
+
+    type t_spi_fsm is (
+        ST_IDLE,
+        ST_WAIT,
+        ST_SPI,
+        ST_DONE
+    );
+
+end package spi_pkg;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\pi_control\pi_control.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.fixed_pkg.all;
+use work.common_pkg.all;
+use work.cloop_pkg.all;
+
+entity pi_control is
+    port (
+        -- System
+        i_clk           : in std_logic;
+        i_rst           : in std_logic;
+        
+        -- Input from Park transformation 
+        i_vld           : in std_logic;
+        i_target_curr   : in t_dq_phase;
+
+        -- Inputs from encoder reading of current
+        i_actual_curr   : in t_dq_phase;
+
+        -- Output to SVPWM
+        o_vld           : out std_logic;
+        o_ph_voltage    : out t_dq_volt;
+
+        -- Ready for new sample 
+        o_rdy           : out std_logic
+    );
+end entity pi_control;
+
+architecture rtl of pi_control is
+    type t_pi_controller_states is (
+        ST_IDLE,
+        ST_ERROR,
+        ST_GAIN,
+        ST_ACCUM,
+        ST_OUTPUT
+    );
+    
+    signal r_state          : t_pi_controller_states;
+    signal w_nx_state       : t_pi_controller_states;
+
+    signal r_target_curr    : t_dq_phase;
+    signal r_actual_curr    : t_dq_phase;
+    signal r_error_curr     : t_dq_phase;
+    signal r_gain_prop      : t_dq_volt;
+    signal r_gain_intg      : t_dq_volt;
+    signal r_intg_accum     : t_dq_volt;
+    signal r_volt_next      : t_dq_volt;
+begin
+    o_rdy <= '1' when r_state = ST_IDLE else '0';
+
+    fsm : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_state <= ST_IDLE;
+            else
+                r_state <= w_nx_state;
+            end if;
+        end if;
+    end process fsm;
+
+    fsm_advance : process(all)
+    begin 
+        w_nx_state <= r_state;
+
+        case r_state is
+            when ST_IDLE => 
+                if i_vld = '1' then 
+                    w_nx_state <= ST_ERROR;
+                end if;
+
+            when ST_ERROR => 
+                w_nx_state <= ST_GAIN;
+
+            when ST_GAIN => 
+                w_nx_state <= ST_ACCUM;
+
+            when ST_ACCUM => 
+                w_nx_state <= ST_OUTPUT;
+
+            when ST_OUTPUT => 
+                w_nx_state <= ST_IDLE;
+
+            when others =>
+                w_nx_state <= ST_IDLE;
+        end case;
+    end process fsm_advance;
+
+    latch : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_target_curr       <= (others => (others => '0'));
+                r_actual_curr       <= (others => (others => '0'));
+            elsif r_state = ST_IDLE and i_vld = '1' then 
+                r_target_curr       <= i_target_curr;
+                r_actual_curr       <= i_actual_curr;
+            end if;
+        end if;
+    end process latch;
+
+    error : process(i_clk) 
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_error_curr        <= (others => (others => '0'));
+            elsif r_state = ST_ERROR then 
+                r_error_curr.d      <= resize(r_target_curr.d - r_actual_curr.d, r_error_curr.d);
+                r_error_curr.q      <= resize(r_target_curr.q - r_actual_curr.q, r_error_curr.q);
+            end if;
+        end if;
+    end process error;
+
+    gains : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_gain_prop         <= (others => (others => '0'));
+                r_gain_intg         <= (others => (others => '0'));
+            elsif r_state = ST_GAIN then 
+                r_gain_prop.d       <= resize(r_error_curr.d * C_KP_PROP_GAIN, r_gain_prop.d);
+                r_gain_prop.q       <= resize(r_error_curr.q * C_KP_PROP_GAIN, r_gain_prop.q);
+
+                r_gain_intg.d       <= resize(r_error_curr.d * C_KI_INTG_GAIN, r_gain_intg.d);
+                r_gain_intg.q       <= resize(r_error_curr.q * C_KI_INTG_GAIN, r_gain_intg.q);
+            end if;
+        end if;
+    end process gains;
+
+    accumulator : process(i_clk)
+        variable v_intg_accum : t_dq_volt;
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_intg_accum        <= (others => (others => '0'));
+            elsif r_state = ST_ACCUM then 
+                v_intg_accum.d      := r_gain_intg.d + r_intg_accum.d;
+                v_intg_accum.q      := r_gain_intg.q + r_intg_accum.q;
+
+                -- Clamp direct axis integral accumulator 
+                if v_intg_accum.d > C_WINDUP_MAX then 
+                    r_intg_accum.d  <= C_WINDUP_MAX;
+                elsif v_intg_accum.d < -C_WINDUP_MAX then 
+                    r_intg_accum.d  <= resize(-C_WINDUP_MAX, r_intg_accum.d);
+                else
+                    r_intg_accum.d  <= v_intg_accum.d;
+                end if;
+
+                -- Clamp quadrature axis integral accumulator 
+                if v_intg_accum.q > C_WINDUP_MAX then 
+                    r_intg_accum.q  <= C_WINDUP_MAX;
+                elsif v_intg_accum.q < -C_WINDUP_MAX then 
+                    r_intg_accum.q  <= resize(-C_WINDUP_MAX, r_intg_accum.q);
+                else
+                    r_intg_accum.q  <= v_intg_accum.q;
+                end if;
+            end if;
+        end if;
+    end process accumulator;
+
+    output : process(i_clk)
+        variable v_output_volt : t_dq_volt;
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                o_ph_voltage        <= (others => (others => '0'));
+            elsif r_state = ST_OUTPUT then 
+                v_output_volt.d     := r_intg_accum.d + r_gain_prop.d;
+                v_output_volt.q     := r_intg_accum.q + r_gain_prop.q;
+
+                -- Clamp direct axis voltage output
+                if v_output_volt.d > C_WINDUP_MAX then 
+                    o_ph_voltage.d  <= C_WINDUP_MAX;
+                elsif v_output_volt.d < -C_WINDUP_MAX then 
+                    o_ph_voltage.d  <= resize(-C_WINDUP_MAX, o_ph_voltage.d);
+                else
+                    o_ph_voltage.d  <= v_output_volt.d;
+                end if;
+
+                -- Clamp quadrature axis voltage output
+                if v_output_volt.q > C_WINDUP_MAX then 
+                    o_ph_voltage.q  <= C_WINDUP_MAX;
+                elsif v_output_volt.q < -C_WINDUP_MAX then 
+                    o_ph_voltage.q  <= resize(-C_WINDUP_MAX, o_ph_voltage.q);
+                else
+                    o_ph_voltage.q  <= v_output_volt.q;
+                end if;
+
+                o_vld <= '1';
+            else 
+                o_vld <= '0';
+            end if;
+        end if;
+    end process output;
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\pwm\pwm_gen.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+
+library work;
+use work.common_pkg.all;
+use work.math_pkg.all;
+
+entity pwm_gen is
+    port (
+        i_clk           : in std_logic;
+        i_rst           : in std_logic;
+        i_duty          : in unsigned(log_2_ceil(C_CLKS_IN_PWM_PRD+1)-1 downto 0); 
+
+        o_pwm                   : out std_logic;    
+        o_pwm_is_first_cycle    : out std_logic     -- Goes high on a new PWM cycle for the first clock cycle
+    );
+end entity pwm_gen;
+
+architecture rtl of pwm_gen is
+    constant C_PWM_BITS             : integer := log_2_ceil(C_CLKS_IN_PWM_PRD+1); 
+    constant C_CLKS_IN_PWM_PERIOD   : unsigned(C_PWM_BITS-1 downto 0)   
+                                        := to_unsigned(C_CLKS_IN_PWM_PRD, C_PWM_BITS);    -- Number of clock ticks in half a PWM period 
+
+    signal r_pwm_start              : unsigned(C_PWM_BITS-1 downto 0);
+    signal r_pwm_end                : unsigned(C_PWM_BITS-1 downto 0);
+    signal r_pwm_counter            : unsigned(C_PWM_BITS-1 downto 0);
+begin 
+    padding : process (i_clk)
+        variable diff       : unsigned(C_PWM_BITS-1 downto 0);
+        variable diff_div_2 : unsigned(C_PWM_BITS-1 downto 0);
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then 
+                r_pwm_start <= (others => '0');
+                r_pwm_end   <= (others => '0');
+            -- Only update i_duty on the last clock cycle of the last PWM cycle
+            elsif r_pwm_counter = C_CLKS_IN_PWM_PERIOD-1 then
+                if i_duty <= C_CLKS_IN_PWM_PRD then
+                    diff    := C_CLKS_IN_PWM_PERIOD - i_duty;
+                else
+                    diff    := (others => '0');
+                end if;
+
+                diff_div_2  := '0' & diff(C_PWM_BITS-1 downto 1);
+
+                r_pwm_start <= diff_div_2;
+                r_pwm_end   <= diff_div_2 + i_duty;
+            end if;
+        end if;
+    end process padding;
+
+    -- Counter for PWM cycle
+    counter : process (i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_pwm_counter       <= (others => '0');
+            else 
+                if r_pwm_counter = C_CLKS_IN_PWM_PERIOD-1 then
+                    r_pwm_counter   <= (others => '0');
+                else
+                    r_pwm_counter   <= r_pwm_counter+1;
+                end if;
+            end if;
+        end if;
+    end process counter;
+
+    drive_pwm : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                o_pwm                   <= '0';
+                o_pwm_is_first_cycle    <= '0';
+            else
+                if r_pwm_counter = 0 then
+                    o_pwm_is_first_cycle <= '1';
+                else
+                    o_pwm_is_first_cycle <= '0';
+                end if;
+
+                if r_pwm_counter < r_pwm_start then
+                    o_pwm <= '0';
+                elsif r_pwm_counter >= r_pwm_end then 
+                    o_pwm <= '0';
+                else
+                    o_pwm <= '1';
+                end if;
+            end if;
+        end if;
+    end process drive_pwm;
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\spi\adc_spi_master.vhd ===
+--------------------------------------------------------------------------------
+-- File:        adc_spi_master.vhd
+-- Author:      Kevin Toledo Fernandez
+-- Github:      systemkev
+-- Website:     systemkev.github.io
+-- Date:        8/16/2026
+-- Description: 
+--------------------------------------------------------------------------------
+
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+
+use work.spi_pkg.all;
+
+entity adc_spi_master is
+    port (
+        i_clk       : in std_logic;
+        i_rst       : in std_logic;
+        i_start     : in std_logic;
+
+        -- Serial SPI comm
+        i_miso      : in std_logic;
+        o_mosi      : out std_logic;
+        o_n_cs      : out std_logic;
+        o_sclk      : out std_logic;
+
+        -- Output
+        o_vld       : out std_logic;
+        o_raw_angle : out unsigned(13 downto 0)
+    );
+end entity adc_spi_master;
+
+architecture rtl of adc_spi_master is
+    -- FSM
+    signal r_cur_state  : t_spi_fsm; 
+    signal w_nxt_state  : t_spi_fsm;
+
+    -- Status signals
+    signal w_spi_done   : std_logic;
+    signal r_wait_done  : std_logic;
+
+    -- Frame 
+    signal r_miso_shft_reg  : std_logic_vector(15 downto 0);
+    signal r_mosi_shft_reg  : std_logic_vector(15 downto 0);
+
+    -- Counter
+    signal r_timer_cnt  : natural range 0 to C_SCLK_SWTCH_CNT;
+    signal r_wait_cnt   : natural range 0 to C_WAIT_MAX;
+    signal r_sclk       : std_logic;
+    signal r_rise_edge  : std_logic;
+    signal r_fall_edge  : std_logic;
+    signal r_bit_cnt    : natural range 0 to 15;
+begin
+    
+    o_sclk  <= r_sclk;
+    o_mosi  <= r_mosi_shft_reg(15);
+
+    w_spi_done  <= '1' when r_cur_state = ST_SPI and r_bit_cnt = 16 and r_timer_cnt = 1 else '0';
+
+    fsm : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_cur_state <= ST_IDLE;
+            else 
+                r_cur_state <= w_nxt_state;
+            end if;
+        end if;
+    end process fsm;
+
+    fsm_nxt : process(all)
+    begin 
+        w_nxt_state <= r_cur_state;
+
+        case r_cur_state is 
+            when ST_IDLE => 
+                if i_start = '1' then 
+                    w_nxt_state <= ST_WAIT;
+                end if;
+
+            when ST_WAIT => 
+                if r_wait_done = '1' then 
+                    w_nxt_state <= ST_SPI;
+                end if;
+
+            when ST_SPI => 
+                if w_spi_done = '1' then 
+                    w_nxt_state <= ST_DONE;
+                end if;
+
+            when ST_DONE => 
+                w_nxt_state     <= ST_IDLE;
+
+            when others =>
+                w_nxt_state     <= ST_IDLE;
+        end case;
+    end process fsm_nxt;
+    
+    sclk : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            -- Default assignments (auto-clears edge flags after 1 clock cycle)
+            r_rise_edge <= '0';
+            r_fall_edge <= '0';
+
+            if r_cur_state = ST_SPI then 
+                
+                if r_timer_cnt = 0 then 
+                    -- reload the counter
+                    r_timer_cnt <= C_SCLK_SWTCH_CNT - 1;
+                    
+                    -- toggle the clock
+                    r_sclk <= not r_sclk;
+                    
+                    -- set the appropriate edge flag based on the current state of r_sclk
+                    if r_sclk = '0' then 
+                        r_rise_edge <= '1'; -- transitioning 0 -> 1
+                    else
+                        r_fall_edge <= '1'; -- transitioning 1 -> 0
+                    end if;
+                    
+                else 
+                    -- count down
+                    r_timer_cnt <= r_timer_cnt - 1;
+                end if;
+                
+            else 
+                -- idle
+                r_sclk      <= '0'; 
+                r_timer_cnt <= C_SCLK_SWTCH_CNT - 1;
+            end if;
+        end if; 
+    end process sclk;
+
+    wait_timer : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' or r_cur_state /= ST_WAIT then
+                r_wait_cnt  <= C_WAIT_MAX;
+                r_wait_done <= '0';
+            elsif r_cur_state = ST_WAIT then
+                if r_wait_cnt = 0 then
+                    r_wait_done <= '1';
+                else
+                    r_wait_cnt <= r_wait_cnt - 1;
+                end if;
+            else 
+                r_wait_cnt <= C_WAIT_MAX;
+            end if;
+        end if;
+    end process wait_timer;
+
+    miso : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_miso_shft_reg <= (others => '0');
+            else 
+                if r_cur_state = ST_SPI then 
+                    if r_rise_edge = '1' then 
+                        r_miso_shft_reg <= r_miso_shft_reg(14 downto 0) & i_miso;
+                    end if; 
+                end if;
+            end if;
+        end if;
+    end process miso;
+
+    mosi : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then 
+            if i_rst = '1' then 
+                r_mosi_shft_reg <= C_READ_ANGLE_CMD;
+            else 
+                if r_cur_state = ST_SPI then 
+                    if r_fall_edge = '1' then 
+                        r_mosi_shft_reg <= r_mosi_shft_reg(14 downto 0) & '0';
+                        r_bit_cnt       <= r_bit_cnt + 1;
+                    end if; 
+                elsif w_nxt_state = ST_WAIT then 
+                    r_mosi_shft_reg <= C_READ_ANGLE_CMD;
+                else 
+                    r_bit_cnt <= 0;
+                end if;
+            end if;
+        end if;
+    end process mosi;
+
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\svpwm\svpwm.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.fixed_pkg.all;
+use work.common_pkg.all;
+
+entity svpwm is
+    port (
+        -- system
+        i_clk           : in std_logic;
+        i_rst           : in std_logic;
+
+        -- input from inverse Clarke transformation (volts in A/B/C phases)
+        i_vld           : in std_logic;
+        i_abc_volt      : in t_abc_volt;
+
+        -- output PWMs 
+        o_vld           : out std_logic;
+        o_abc_cnts      : out t_pwm_cnt_phase
+    );
+end entity svpwm;
+
+architecture rtl of svpwm is
+
+    constant C_HALF_PERIOD : integer := C_CLKS_IN_PWM_PRD / 2;
+    
+    -- scales voltage to PWM ticks
+    constant C_V_TO_CNT    : sfixed(11 downto -12) := to_sfixed(real(C_CLKS_IN_PWM_PRD) / C_VBUS, 11, -12);
+
+
+    -- =========================================================================
+    -- pipeline registers
+    -- =========================================================================
+    -- stage 1
+    signal r_vld_stg1   : std_logic;
+    signal r_v_max_stg1 : t_phase_voltage;
+    signal r_v_min_stg1 : t_phase_voltage;
+    signal r_v_a_stg1   : t_phase_voltage;
+    signal r_v_b_stg1   : t_phase_voltage;
+    signal r_v_c_stg1   : t_phase_voltage;
+
+    -- stage 2
+    signal r_vld_stg2      : std_logic;
+    signal r_v_offset_stg2 : t_phase_voltage;
+    signal r_v_a_stg2      : t_phase_voltage;
+    signal r_v_b_stg2      : t_phase_voltage;
+    signal r_v_c_stg2      : t_phase_voltage;
+
+    -- stage 3
+    signal r_vld_stg3      : std_logic;
+    signal r_v_a_star_stg3 : t_phase_voltage;
+    signal r_v_b_star_stg3 : t_phase_voltage;
+    signal r_v_c_star_stg3 : t_phase_voltage;
+
+begin
+
+    process(i_clk)
+        variable v_a, v_b, v_c : t_phase_voltage;
+        variable v_max, v_min  : t_phase_voltage;
+        
+        variable v_cnt_a       : integer;
+        variable v_cnt_b       : integer;
+        variable v_cnt_c       : integer;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_vld_stg1 <= '0';
+                r_vld_stg2 <= '0';
+                r_vld_stg3 <= '0';
+                o_vld      <= '0';
+                
+                o_abc_cnts.A <= C_HALF_PERIOD;
+                o_abc_cnts.B <= C_HALF_PERIOD;
+                o_abc_cnts.C <= C_HALF_PERIOD;
+            else
+                -- =============================================================
+                -- stage 1: find extrema
+                -- =============================================================
+                r_vld_stg1 <= i_vld;
+                
+                if i_vld = '1' then
+                    v_a := i_abc_volt.A;
+                    v_b := i_abc_volt.B;
+                    v_c := i_abc_volt.C;
+                    
+                    -- Pass through raw values
+                    r_v_a_stg1 <= v_a;
+                    r_v_b_stg1 <= v_b;
+                    r_v_c_stg1 <= v_c;
+                    
+                    -- Find Maximum
+                    if (v_a >= v_b) and (v_a >= v_c) then
+                        v_max := v_a;
+                    elsif (v_b >= v_a) and (v_b >= v_c) then
+                        v_max := v_b;
+                    else
+                        v_max := v_c;
+                    end if;
+                    r_v_max_stg1 <= v_max;
+                    
+                    -- Find Minimum
+                    if (v_a <= v_b) and (v_a <= v_c) then
+                        v_min := v_a;
+                    elsif (v_b <= v_a) and (v_b <= v_c) then
+                        v_min := v_b;
+                    else
+                        v_min := v_c;
+                    end if;
+                    r_v_min_stg1 <= v_min;
+                end if;
+
+                -- =============================================================
+                -- stage 2: calculate zero-sequence offset
+                -- =============================================================
+                r_vld_stg2 <= r_vld_stg1;
+                
+                if r_vld_stg1 = '1' then
+                    r_v_a_stg2 <= r_v_a_stg1;
+                    r_v_b_stg2 <= r_v_b_stg1;
+                    r_v_c_stg2 <= r_v_c_stg1;
+                    
+                    -- V_offset = -(V_max + V_min) * 0.5
+                    -- mult by 0.5 is equivalent to shift right by 1
+                    r_v_offset_stg2 <= resize(shift_right((r_v_max_stg1 + r_v_min_stg1), 1), r_v_offset_stg2);
+                end if;
+
+                -- =============================================================
+                -- stage 3: inject offset
+                -- =============================================================
+                r_vld_stg3 <= r_vld_stg2;
+                
+                if r_vld_stg2 = '1' then
+                    -- V* = V + V_offset
+                    r_v_a_star_stg3 <= resize(r_v_a_stg2 + r_v_offset_stg2, r_v_a_star_stg3);
+                    r_v_b_star_stg3 <= resize(r_v_b_stg2 + r_v_offset_stg2, r_v_b_star_stg3);
+                    r_v_c_star_stg3 <= resize(r_v_c_stg2 + r_v_offset_stg2, r_v_c_star_stg3);
+                end if;
+
+                -- =============================================================
+                -- stage 4: scale to PWM integers and saturate
+                -- =============================================================
+                o_vld <= r_vld_stg3;
+                
+                if r_vld_stg3 = '1' then
+                    -- multiply the voltage by our conversion constant
+                    -- convert from fixed-point to standard integer
+                    -- add C_HALF_PERIOD so 0V centers perfectly at 50% duty cycle
+                    v_cnt_a := to_integer(r_v_a_star_stg3 * C_V_TO_CNT) + C_HALF_PERIOD;
+                    v_cnt_b := to_integer(r_v_b_star_stg3 * C_V_TO_CNT) + C_HALF_PERIOD;
+                    v_cnt_c := to_integer(r_v_c_star_stg3 * C_V_TO_CNT) + C_HALF_PERIOD;
+                    
+                    -- phase A saturation limits
+                    if v_cnt_a > C_CLKS_IN_PWM_PRD then
+                        o_abc_cnts.A <= C_CLKS_IN_PWM_PRD;
+                    elsif v_cnt_a < 0 then
+                        o_abc_cnts.A <= 0;
+                    else
+                        o_abc_cnts.A <= v_cnt_a;
+                    end if;
+                    
+                    -- phase B saturation limits
+                    if v_cnt_b > C_CLKS_IN_PWM_PRD then
+                        o_abc_cnts.B <= C_CLKS_IN_PWM_PRD;
+                    elsif v_cnt_b < 0 then
+                        o_abc_cnts.B <= 0;
+                    else
+                        o_abc_cnts.B <= v_cnt_b;
+                    end if;
+
+                    -- Phase C saturation limits
+                    if v_cnt_c > C_CLKS_IN_PWM_PRD then
+                        o_abc_cnts.C <= C_CLKS_IN_PWM_PRD;
+                    elsif v_cnt_c < 0 then
+                        o_abc_cnts.C <= 0;
+                    else
+                        o_abc_cnts.C <= v_cnt_c;
+                    end if;
+                    
+                end if;
+            end if;
+        end if;
+    end process;
+
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\transforms\clarke.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.fixed_pkg.all;
+
+library work;
+use work.cloop_pkg.all;
+
+entity clarke is
+    port (
+        i_clk       : in std_logic;
+        i_rst       : in std_logic;
+
+        -- Input currents for the Clarke transformation
+        -- Valid range [-5A, 5A], Q3.12
+        i_phases    : in t_abc_phase;
+
+        -- Output from the Clarke transformation
+        -- Valid range [-5A, 5A], Q3.12
+        o_clarke    : out t_ab_phase
+    );
+end entity clarke;
+
+architecture rtl of clarke is
+    constant C_CLARKE_MTRX_00   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_00, 0, -15);
+    constant C_CLARKE_MTRX_01   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_01, 0, -15);
+    constant C_CLARKE_MTRX_02   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_02, 0, -15);
+    constant C_CLARKE_MTRX_10   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_10, 0, -15);
+    constant C_CLARKE_MTRX_11   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_11, 0, -15);
+    constant C_CLARKE_MTRX_12   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_12, 0, -15);
+    
+    signal r_input_phases       : t_abc_phase;
+    signal r_output_clarke      : t_ab_phase;
+begin
+    o_clarke <= r_output_clarke;
+
+    sample_input : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_input_phases.A    <= to_sfixed(0.0, r_input_phases.A);
+                r_input_phases.B    <= to_sfixed(0.0, r_input_phases.B);
+                r_input_phases.C    <= to_sfixed(0.0, r_input_phases.C);
+                r_input_phases.vld  <= '0';
+            else
+                if i_phases.vld = '1' then 
+                    r_input_phases      <= i_phases;
+                else 
+                    r_input_phases.vld  <= '0';
+                end if;
+            end if;
+        end if;
+    end process sample_input;
+
+    calc_clarke : process(i_clk)
+        variable v_ph_A_mult_row0   : sfixed(4 downto -27);
+        variable v_ph_B_mult_row0   : sfixed(4 downto -27);
+        variable v_ph_C_mult_row0   : sfixed(4 downto -27);
+        variable v_ph_A_mult_row1   : sfixed(4 downto -27);
+        variable v_ph_B_mult_row1   : sfixed(4 downto -27);
+        variable v_ph_C_mult_row1   : sfixed(4 downto -27);
+        variable v_alpha_raw        : sfixed(5 downto -12);
+        variable v_beta_raw         : sfixed(5 downto -12);
+        variable v_alpha            : sfixed(3 downto -12);
+        variable v_beta             : sfixed(3 downto -12);
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_output_clarke.alpha   <= to_sfixed(0.0, r_output_clarke.alpha);
+                r_output_clarke.beta    <= to_sfixed(0.0, r_output_clarke.beta);
+                r_output_clarke.vld     <= '0';
+            elsif r_input_phases.vld = '1' then
+                v_ph_A_mult_row0    := r_input_phases.A * C_CLARKE_MTRX_00;
+                v_ph_B_mult_row0    := r_input_phases.B * C_CLARKE_MTRX_01;
+                v_ph_C_mult_row0    := r_input_phases.C * C_CLARKE_MTRX_02;
+                v_ph_A_mult_row1    := r_input_phases.A * C_CLARKE_MTRX_10;
+                v_ph_B_mult_row1    := r_input_phases.B * C_CLARKE_MTRX_11;
+                v_ph_C_mult_row1    := r_input_phases.C * C_CLARKE_MTRX_12;
+
+                v_alpha_raw := resize(v_ph_A_mult_row0 + v_ph_B_mult_row0 + v_ph_C_mult_row0, v_alpha_raw);
+                v_beta_raw  := resize(v_ph_A_mult_row1 + v_ph_B_mult_row1 + v_ph_C_mult_row1, v_beta_raw);
+
+                if v_alpha_raw > 5.0 then
+                    v_alpha := to_sfixed(5.0, v_alpha);
+                elsif v_alpha_raw < -5.0 then
+                    v_alpha := to_sfixed(-5.0, v_alpha);
+                else
+                    v_alpha := resize(v_alpha_raw, v_alpha);
+                end if;
+
+                if v_beta_raw > 5.0 then
+                    v_beta  := to_sfixed(5.0, v_beta);
+                elsif v_beta_raw < -5.0 then
+                    v_beta  := to_sfixed(-5.0, v_beta);
+                else
+                    v_beta  := resize(v_beta_raw, v_beta);
+                end if;
+
+                r_output_clarke.alpha   <= v_alpha;
+                r_output_clarke.beta    <= v_beta;
+                r_output_clarke.vld     <= '1';
+            else
+                r_output_clarke.vld     <= '0';
+            end if;
+        end if;
+    end process calc_clarke;
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\transforms\clarke_inverse.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.fixed_pkg.all;
+
+library work;
+use work.cloop_pkg.all;
+
+entity clarke_inverse is
+    port (
+        i_clk       : in std_logic;
+        i_rst       : in std_logic;
+
+        -- Input currents for the Clarke transformation
+        -- Valid range [-5A, 5A], Q3.12
+        i_alpha_beta    : in t_ab_phase;
+
+        -- Output from the Clarke transformation
+        -- Valid range [-5A, 5A], Q3.12
+        o_inv_clarke    : out t_abc_phase
+    );
+end entity clarke_inverse;
+
+architecture rtl of clarke_inverse is
+    constant C_CLARKE_INV_MTRX_00   : sfixed(1 downto -14)  := to_sfixed(C_CLARKE_INV_MX_00, 1, -14);
+    constant C_CLARKE_INV_MTRX_01   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_01, 0, -15);
+    constant C_CLARKE_INV_MTRX_10   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_10, 0, -15);
+    constant C_CLARKE_INV_MTRX_11   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_11, 0, -15);
+    constant C_CLARKE_INV_MTRX_20   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_20, 0, -15);
+    constant C_CLARKE_INV_MTRX_21   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_21, 0, -15);
+    
+    signal r_input_alpha_beta       : t_ab_phase;
+begin
+    sample_input : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_input_alpha_beta.alpha    <= to_sfixed(0.0, r_input_alpha_beta.alpha);
+                r_input_alpha_beta.beta     <= to_sfixed(0.0, r_input_alpha_beta.beta);
+                r_input_alpha_beta.vld      <= '0';
+            else
+                if i_alpha_beta.vld = '1' then 
+                    r_input_alpha_beta      <= i_alpha_beta;
+                else 
+                    r_input_alpha_beta.vld  <= '0';
+                end if;
+            end if;
+        end if;
+    end process sample_input;
+
+    calc_clarke : process(i_clk)
+        variable v_mtrx_00          : sfixed(4 downto -27);
+        variable v_mtrx_01          : sfixed(4 downto -27);
+        variable v_mtrx_10          : sfixed(4 downto -27);
+        variable v_mtrx_11          : sfixed(4 downto -27);
+        variable v_mtrx_20          : sfixed(4 downto -27);
+        variable v_mtrx_21          : sfixed(4 downto -27);
+
+        variable v_ph_raw_a         : sfixed(5 downto -27);
+        variable v_ph_raw_b         : sfixed(5 downto -27);
+        variable v_ph_raw_c         : sfixed(5 downto -27);
+
+        variable v_ph_a             : sfixed(3 downto -12);
+        variable v_ph_b             : sfixed(3 downto -12);
+        variable v_ph_c             : sfixed(3 downto -12);
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                o_inv_clarke.A   <= to_sfixed(0.0, o_inv_clarke.A);
+                o_inv_clarke.B   <= to_sfixed(0.0, o_inv_clarke.B);
+                o_inv_clarke.C   <= to_sfixed(0.0, o_inv_clarke.C);
+                o_inv_clarke.vld <= '0';
+            elsif r_input_alpha_beta.vld = '1' then
+                v_mtrx_00   := resize(C_CLARKE_INV_MTRX_00 * r_input_alpha_beta.alpha, v_mtrx_00);
+                v_mtrx_01   := resize(C_CLARKE_INV_MTRX_01 * r_input_alpha_beta.beta,  v_mtrx_01);
+                v_mtrx_10   := resize(C_CLARKE_INV_MTRX_10 * r_input_alpha_beta.alpha, v_mtrx_10);
+                v_mtrx_11   := resize(C_CLARKE_INV_MTRX_11 * r_input_alpha_beta.beta,  v_mtrx_11);
+                v_mtrx_20   := resize(C_CLARKE_INV_MTRX_20 * r_input_alpha_beta.alpha, v_mtrx_20);
+                v_mtrx_21   := resize(C_CLARKE_INV_MTRX_21 * r_input_alpha_beta.beta,  v_mtrx_21);
+
+                v_ph_raw_a  := resize(v_mtrx_00 + v_mtrx_01, v_ph_raw_a);
+                v_ph_raw_b  := resize(v_mtrx_10 + v_mtrx_11, v_ph_raw_b);
+                v_ph_raw_c  := resize(v_mtrx_20 + v_mtrx_21, v_ph_raw_c);
+
+                if v_ph_raw_a > 5.0 then 
+                    v_ph_a  := to_sfixed(5.0, v_ph_a);
+                elsif v_ph_raw_a < -5.0 then 
+                    v_ph_a  := to_sfixed(-5.0, v_ph_a);
+                else
+                    v_ph_a  := resize(v_ph_raw_a, v_ph_a);
+                end if;
+
+                if v_ph_raw_b > 5.0 then 
+                    v_ph_b  := to_sfixed(5.0, v_ph_b);
+                elsif v_ph_raw_b < -5.0 then 
+                    v_ph_b  := to_sfixed(-5.0, v_ph_b);
+                else
+                    v_ph_b  := resize(v_ph_raw_b, v_ph_b);
+                end if;
+
+                if v_ph_raw_c > 5.0 then 
+                    v_ph_c  := to_sfixed(5.0, v_ph_c);
+                elsif v_ph_raw_c < -5.0 then 
+                    v_ph_c  := to_sfixed(-5.0, v_ph_c);
+                else
+                    v_ph_c  := resize(v_ph_raw_c, v_ph_c);
+                end if;
+
+                o_inv_clarke.A <= v_ph_a; 
+                o_inv_clarke.B <= v_ph_b; 
+                o_inv_clarke.C <= v_ph_c; 
+                o_inv_clarke.vld <= '1';
+            else
+                o_inv_clarke.vld <= '0';
+            end if;
+        end if;
+    end process calc_clarke;
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\transforms\park.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.fixed_pkg.all;
+use work.math_pkg.all;
+
+entity park is
+    port (
+        i_clk       : in std_logic;
+        i_rst       : in std_logic;
+
+        i_clarke    : in t_clarke_record;
+        i_angle     : in signed(15 downto 0);
+
+        o_rdy       : out std_logic;
+        o_park      : out t_park_record
+    );
+end entity park;
+
+architecture rtl of park is
+    -- The Park transform implements the following math:
+    --      i_d = i_a cos(phi) + i_b sin(phi)
+    --      i_q = i_b cos(phi) - i_a sin(phi)
+    --          where a = alpha, b = beta
+    signal r_input_clarke       : t_clarke_record;
+    signal r_input_angle        : signed(15 downto 0);
+
+    signal r_cordic_start       : std_logic;
+    signal w_cordic_vld         : std_logic;
+    signal w_cordic_cos         : sfixed(1 downto -14);
+    signal w_cordic_sin         : sfixed(1 downto -14);
+    signal w_cordic_rdy         : std_logic;
+
+    signal r_cordic_cos         : sfixed(1 downto -14);
+    signal r_cordic_sin         : sfixed(1 downto -14);
+
+    -- Park transformation intermediates
+    signal r_id_ia_term         : sfixed(5 downto -26);
+    signal r_id_ib_term         : sfixed(5 downto -26);
+    signal r_iq_ia_term         : sfixed(5 downto -26);
+    signal r_iq_ib_term         : sfixed(5 downto -26);
+
+    signal r_d_park             : sfixed(3 downto -12);
+    signal r_q_park             : sfixed(3 downto -12);
+
+    -- FSM states
+    type t_park_states is (
+        ST_IDLE,   -- Wait for inputs to be valid 
+        ST_FETCH,  -- Call the CORDIC (22 cycles)
+        ST_MULT,
+        ST_ADD,
+        ST_OUTPUT
+    );
+
+    signal r_current_state      : t_park_states;
+    signal w_next_state         : t_park_states;
+begin
+    o_rdy <= '1' when r_current_state = ST_IDLE and w_cordic_rdy = '1' else '0';
+
+    fsm : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then 
+                r_current_state <= ST_IDLE;
+            else
+                r_current_state <= w_next_state;
+            end if;
+        end if;
+    end process fsm;
+
+    fsm_advance : process(all)
+    begin 
+        w_next_state    <= r_current_state;
+
+        case r_current_state is
+            when ST_IDLE => 
+                if i_clarke.vld = '1' and w_cordic_rdy = '1' then 
+                    w_next_state <= ST_FETCH;
+                end if;
+            when ST_FETCH => 
+                if w_cordic_vld = '1' then 
+                    w_next_state <= ST_MULT;
+                end if;
+            when ST_MULT => 
+                w_next_state <= ST_ADD;
+            when ST_ADD => 
+                w_next_state <= ST_OUTPUT;
+            when ST_OUTPUT =>
+                w_next_state <= ST_IDLE;
+            when others => 
+                w_next_state <= ST_IDLE;
+        end case;
+    end process fsm_advance;
+
+    u_cordic : entity work.cordic
+        port map (
+            i_clk       => i_clk,
+            i_rst       => i_rst,
+            i_angle     => r_input_angle,
+            i_vld       => r_cordic_start,
+            o_vld       => w_cordic_vld,
+            o_cos       => w_cordic_cos,
+            o_sin       => w_cordic_sin,
+            o_rdy       => w_cordic_rdy
+        );
+    
+    register_input : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_input_clarke      <= (vld   => '0', 
+                                        alpha => (others => '0'), 
+                                        beta  => (others => '0'));
+                r_input_angle       <= (others => '0');
+            elsif i_clarke.vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
+                r_input_clarke      <= i_clarke;
+                r_input_angle       <= i_angle;
+                r_cordic_start      <= '1';
+            else
+                r_cordic_start      <= '0';
+            end if;
+        end if;
+    end process register_input;
+
+    register_cordic : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_cordic_cos        <= (others => '0');
+                r_cordic_sin        <= (others => '0');
+            elsif r_current_state = ST_FETCH then
+                if w_cordic_vld = '1' then
+                    r_cordic_cos    <= w_cordic_cos;
+                    r_cordic_sin    <= w_cordic_sin;
+                end if;
+            end if;
+        end if;
+    end process register_cordic;
+
+    -- The Park transform implements the following math:
+    --      i_d = i_a cos(phi) + i_b sin(phi)
+    --      i_q = i_b cos(phi) - i_a sin(phi)
+    calc_intermediate : process(i_clk) 
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_id_ia_term    <= (others => '0');
+                r_id_ib_term    <= (others => '0');
+                r_iq_ia_term    <= (others => '0');
+                r_iq_ib_term    <= (others => '0');
+            elsif r_current_state = ST_MULT then 
+                r_id_ia_term    <= resize(r_input_clarke.alpha  * r_cordic_cos, r_id_ia_term);
+                r_id_ib_term    <= resize(r_input_clarke.beta   * r_cordic_sin, r_id_ib_term);
+                r_iq_ib_term    <= resize(r_input_clarke.beta   * r_cordic_cos, r_iq_ib_term);
+                r_iq_ia_term    <= resize(r_input_clarke.alpha  * r_cordic_sin, r_iq_ia_term);
+            end if;
+        end if;
+    end process calc_intermediate;
+
+    add_intermediates : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_d_park        <= (others => '0');
+                r_q_park        <= (others => '0');
+            elsif r_current_state = ST_ADD then
+                r_d_park        <= resize(r_id_ia_term + r_id_ib_term, r_d_park);
+                r_q_park        <= resize(r_iq_ib_term - r_iq_ia_term, r_q_park);
+            end if;
+        end if;
+    end process add_intermediates;
+
+    drive_output : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                o_park  <= (vld => '0', 
+                            d => (others => '0'), 
+                            q => (others => '0'));
+            elsif r_current_state = ST_OUTPUT then
+                o_park  <= (vld => '1', 
+                            d => r_d_park, 
+                            q => r_q_park);
+            else 
+                o_park.vld <= '0';
+            end if;
+        end if;
+    end process drive_output;
+end architecture rtl;
+
+=== FILE: C:\Users\kevin\Desktop\projects\foc\foc-control-fpga\blocks\transforms\park_inverse.vhd ===
+library IEEE;
+use IEEE.std_logic_1164.all;
+use IEEE.numeric_std.all;
+use IEEE.fixed_pkg.all;
+use work.math_pkg.all;
+
+entity park_inverse is
+    port (
+        i_clk       : in std_logic;
+        i_rst       : in std_logic;
+
+        i_angle     : in signed(15 downto 0);
+        i_park      : in t_dq_phase;
+
+        o_rdy       : out std_logic;
+        o_inv_park  : out t_ab_phase
+    );
+end entity park_inverse;
+
+architecture rtl of park_inverse is
+    -- The Inverse Park transform implements the following math:
+    --      V_alpha = V_d * cos(theta) - V_q * sin(theta)
+    --      V_beta  = V_d * sin(theta) + V_q * cos(theta)
+
+    signal r_input_park         : t_dq_phase;
+    signal r_input_angle        : signed(15 downto 0);
+
+    signal w_cordic_start       : std_logic;
+    signal w_cordic_vld         : std_logic;
+    signal w_cordic_rdy         : std_logic;
+    signal w_cordic_cos         : sfixed(1 downto -14);
+    signal w_cordic_sin         : sfixed(1 downto -14);
+
+    signal r_cordic_cos         : sfixed(1 downto -14);
+    signal r_cordic_sin         : sfixed(1 downto -14);
+
+    -- Corrected Inverse Park transformation intermediates
+    signal r_d_cos_term         : sfixed(5 downto -26);
+    signal r_q_sin_term         : sfixed(5 downto -26);
+    signal r_d_sin_term         : sfixed(5 downto -26);
+    signal r_q_cos_term         : sfixed(5 downto -26);
+
+    signal r_alpha_inv_park     : sfixed(3 downto -12);
+    signal r_beta_inv_park      : sfixed(3 downto -12);
+
+    -- FSM states
+    type t_park_states is (
+        ST_IDLE,   
+        ST_FETCH,  
+        ST_MULT,
+        ST_ADD,
+        ST_OUTPUT
+    );
+
+    signal r_current_state      : t_park_states;
+    signal w_next_state         : t_park_states;
+begin
+    u_cordic : entity work.cordic
+        port map (
+            i_clk       => i_clk,
+            i_rst       => i_rst,
+            i_vld       => w_cordic_start,
+            o_rdy       => w_cordic_rdy,
+            i_angle     => r_input_angle,
+            o_vld       => w_cordic_vld,
+            o_cos       => w_cordic_cos,
+            o_sin       => w_cordic_sin        
+        );
+
+    o_rdy <= '1' when r_current_state = ST_IDLE else '0';
+    w_cordic_start <= '1' when (r_current_state = ST_IDLE 
+                            and i_park.vld = '1' 
+                            and w_cordic_rdy = '1') 
+                        else '0';
+
+    fsm : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then 
+                r_current_state <= ST_IDLE;
+            else
+                r_current_state <= w_next_state;
+            end if;
+        end if;
+    end process fsm;
+
+    fsm_advance : process(all)
+    begin 
+        w_next_state    <= r_current_state;
+
+        case r_current_state is
+            when ST_IDLE => 
+                -- Fixed: Look at i_park.vld
+                if i_park.vld = '1' and w_cordic_rdy = '1' then 
+                    w_next_state <= ST_FETCH;
+                end if;
+            when ST_FETCH => 
+                if w_cordic_vld = '1' then 
+                    w_next_state <= ST_MULT;
+                end if;
+            when ST_MULT => 
+                w_next_state <= ST_ADD;
+            when ST_ADD => 
+                w_next_state <= ST_OUTPUT;
+            when ST_OUTPUT =>
+                w_next_state <= ST_IDLE;
+            when others => 
+                w_next_state <= ST_IDLE;
+        end case;
+    end process fsm_advance;
+    
+    register_input : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                -- Fixed: t_park_record uses d and q
+                r_input_park        <= (vld => '0', 
+                                        d   => (others => '0'), 
+                                        q   => (others => '0'));
+                r_input_angle       <= (others => '0');
+            elsif i_park.vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
+                r_input_park        <= i_park;
+                r_input_angle       <= i_angle;
+            end if;
+        end if;
+    end process register_input;
+
+    register_cordic : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_cordic_cos        <= (others => '0');
+                r_cordic_sin        <= (others => '0');
+            elsif r_current_state = ST_FETCH then
+                if w_cordic_vld = '1' then
+                    r_cordic_cos    <= w_cordic_cos;
+                    r_cordic_sin    <= w_cordic_sin;
+                end if;
+            end if;
+        end if;
+    end process register_cordic;
+
+    -- Execute multiplication phase
+    calc_intermediate : process(i_clk) 
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_d_cos_term    <= (others => '0');
+                r_q_sin_term    <= (others => '0');
+                r_d_sin_term    <= (others => '0');
+                r_q_cos_term    <= (others => '0');
+            elsif r_current_state = ST_MULT then 
+                r_d_cos_term    <= resize(r_input_park.d * r_cordic_cos, r_d_cos_term);
+                r_q_sin_term    <= resize(r_input_park.q * r_cordic_sin, r_q_sin_term);
+                r_d_sin_term    <= resize(r_input_park.d * r_cordic_sin, r_d_sin_term);
+                r_q_cos_term    <= resize(r_input_park.q * r_cordic_cos, r_q_cos_term);
+            end if;
+        end if;
+    end process calc_intermediate;
+
+    -- execute addition/subtraction phase
+    add_intermediates : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                r_alpha_inv_park    <= (others => '0');
+                r_beta_inv_park     <= (others => '0');
+            elsif r_current_state = ST_ADD then
+                -- Fixed: Resize targets refer to the actual target signals
+                r_alpha_inv_park    <= resize(r_d_cos_term - r_q_sin_term, r_alpha_inv_park);
+                r_beta_inv_park     <= resize(r_d_sin_term + r_q_cos_term, r_beta_inv_park);
+            end if;
+        end if;
+    end process add_intermediates;
+
+    -- Drive Output Port
+    drive_output : process(i_clk)
+    begin 
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                -- Fixed: Target o_inv_park and use clarke struct members
+                o_inv_park  <= (vld   => '0', 
+                                alpha => (others => '0'), 
+                                beta  => (others => '0'));
+            elsif r_current_state = ST_OUTPUT then
+                o_inv_park  <= (vld   => '1', 
+                                alpha => r_alpha_inv_park, 
+                                beta  => r_beta_inv_park);
+            else 
+                o_inv_park  <= (vld   => '0', 
+                                alpha => (others => '0'), 
+                                beta  => (others => '0'));
+            end if;
+        end if;
+    end process drive_output;
+end architecture rtl;
+
