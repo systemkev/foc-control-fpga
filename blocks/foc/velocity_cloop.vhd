@@ -91,9 +91,9 @@ begin
             if i_rst = '1' then 
                 r_intg_accum <= (others => '0');
             elsif r_vld_pipe(2) = '1' then 
-                v_intg_accum := r_gain_intg + r_intg_accum;
+                v_intg_accum := resize(r_gain_intg + r_intg_accum, v_intg_accum);
 
-                if v_intg_accum > C_MAX_IQ_CURRENT_VEL then 
+                if v_intg_accum > C_MAX_IQ_CURRENT then 
                     r_intg_accum <= C_MAX_IQ_CURRENT;
                 elsif v_intg_accum < -C_MAX_IQ_CURRENT then 
                     r_intg_accum <= resize(-C_MAX_IQ_CURRENT, r_intg_accum);
@@ -110,13 +110,13 @@ begin
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
-                o_vld        <= '0';
-                o_current <= (others => (others => '0'));
+                o_vld     <= '0';
+                o_current <= (d => (others => '0'), q => (others => '0'));
             else 
                 o_vld <= r_vld_pipe(3);
                 
                 if r_vld_pipe(3) = '1' then 
-                    v_output_curr.q := resize(r_intg_accum.q + r_gain_prop.q, v_output_curr.q);
+                    v_output_curr.q := resize(r_intg_accum + r_gain_prop, v_output_curr.q);
 
                     o_current.d <= (others => '0');
 

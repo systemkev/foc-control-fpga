@@ -11,10 +11,14 @@ package common_pkg is
     constant C_CLKS_IN_PWM_PRD      : natural   := integer(C_CLK_FREQ / C_PWM_FREQ);
     constant C_VBUS                 : real      := 24.0;        -- 24V bus voltage
     constant C_MAX_VOLT             : real      := C_VBUS / sqrt(3.0);
+    constant C_NUM_POLE_PAIRS       : integer   := 7;
 
     subtype t_phase_current is sfixed(3 downto -12);   -- Max value: +7.9997 Amps, Min value: -8.0000 Amps
     subtype t_phase_voltage is sfixed(5 downto -12);   -- Max value: +31.9997 Volts, Min value: -32.0000 Volts
     subtype t_angl_velocity is sfixed(8 downto -20);
+    subtype t_angl_position is signed(31 downto 0);
+    subtype t_angl_raw_unwr is unsigned(13 downto 0);
+    subtype t_cordic_inputs is signed(15 downto 0);
 
     type t_pwm_cnt_phase is record 
         A           : integer range 0 to C_CLKS_IN_PWM_PRD;

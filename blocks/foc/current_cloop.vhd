@@ -49,8 +49,8 @@ begin
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
-                r_target_curr <= (others => (others => '0'));
-                r_actual_curr <= (others => (others => '0'));
+                r_target_curr <= (d => (others => '0'), q => (others => '0'));
+                r_actual_curr <= (d => (others => '0'), q => (others => '0'));
             elsif i_vld = '1' then 
                 r_target_curr <= i_target_curr;
                 r_actual_curr <= i_actual_curr;
@@ -62,7 +62,7 @@ begin
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
-                r_error_curr <= (others => (others => '0'));
+                r_error_curr <= (d => (others => '0'), q => (others => '0'));
             elsif r_vld(0) = '1' then 
                 r_error_curr.d <= resize(r_target_curr.d - r_actual_curr.d, r_error_curr.d);
                 r_error_curr.q <= resize(r_target_curr.q - r_actual_curr.q, r_error_curr.q);
@@ -74,8 +74,8 @@ begin
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
-                r_gain_prop <= (others => (others => '0'));
-                r_gain_intg <= (others => (others => '0'));
+                r_gain_prop <= (d => (others => '0'), q => (others => '0'));
+                r_gain_intg <= (d => (others => '0'), q => (others => '0'));
             elsif r_vld(1) = '1' then 
                 r_gain_prop.d <= resize(r_error_curr.d * C_KP_PROP_GAIN, r_gain_prop.d);
                 r_gain_prop.q <= resize(r_error_curr.q * C_KP_PROP_GAIN, r_gain_prop.q);
@@ -90,7 +90,7 @@ begin
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
-                r_intg_accum <= (others => (others => '0'));
+                r_intg_accum <= (d => (others => '0'), q => (others => '0'));
             elsif r_vld(2) = '1' then 
                 v_intg_accum.d := resize(r_gain_intg.d + r_intg_accum.d, v_intg_accum.d);
                 v_intg_accum.q := resize(r_gain_intg.q + r_intg_accum.q, v_intg_accum.q);
@@ -119,7 +119,7 @@ begin
     begin 
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
-                o_ph_voltage <= (others => (others => '0'));
+                o_ph_voltage <= (d => (others => '0'), q => (others => '0'));
                 o_vld <= '0';
             else 
                 o_vld <= r_vld(3);
