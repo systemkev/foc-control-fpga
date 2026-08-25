@@ -1,17 +1,8 @@
---------------------------------------------------------------------------------
--- File:        adc_spi_master.vhd
--- Author:      Kevin Toledo Fernandez
--- Github:      systemkev
--- Website:     systemkev.github.io
--- Date:        8/16/2026
--- Description: 
---------------------------------------------------------------------------------
-
 library IEEE;
 use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
 
-use work.spi_pkg.all;
+use work.spi_pkg.all; 
 
 entity adc_spi_master is
     port (
@@ -32,6 +23,11 @@ entity adc_spi_master is
 end entity adc_spi_master;
 
 architecture rtl of adc_spi_master is
+
+    -- Sequence Tracking
+    type t_spi_step is (CMD_PHASE, READ_PHASE, CLEAR_PHASE);
+    signal r_step : t_spi_step;
+
     -- FSM
     signal r_cur_state  : t_spi_fsm; 
     signal w_nxt_state  : t_spi_fsm;
@@ -55,6 +51,9 @@ begin
     
     o_sclk  <= r_sclk;
     o_mosi  <= r_mosi_shft_reg(15);
+    
+    -- Assign CSn: Drives low during SPI transaction, high otherwise
+    o_n_cs  <= '0' when r_cur_state = ST_SPI else '1';
 
     w_spi_done  <= '1' when r_cur_state = ST_SPI and r_bit_cnt = 16 and r_timer_cnt = 1 else '0';
 
@@ -63,8 +62,22 @@ begin
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
                 r_cur_state <= ST_IDLE;
+                r_step      <= CMD_PHASE;
             else 
                 r_cur_state <= w_nxt_state;
+                
+                -- Track which frame of the sequence we are currently executing
+                if r_cur_state = ST_IDLE and i_start = '1' then
+                    r_step <= CMD_PHASE;
+                elsif r_cur_state = ST_CHECK then
+                    if r_step = CMD_PHASE then
+                        r_step <= READ_PHASE;
+                    elsif r_step = READ_PHASE and r_miso_shft_reg(14) = '1' then
+                        r_step <= CLEAR_PHASE;
+                    elsif r_step = CLEAR_PHASE then
+                        r_step <= CMD_PHASE;
+                    end if;
+                end if;
             end if;
         end if;
     end process fsm;
@@ -86,7 +99,15 @@ begin
 
             when ST_SPI => 
                 if w_spi_done = '1' then 
+                    w_nxt_state <= ST_CHECK;
+                end if;
+                
+            when ST_CHECK =>
+                -- Exit loop only if we completed a read phase with no errors
+                if r_step = READ_PHASE and r_miso_shft_reg(14) = '0' then
                     w_nxt_state <= ST_DONE;
+                else
+                    w_nxt_state <= ST_WAIT; 
                 end if;
 
             when ST_DONE => 
@@ -100,33 +121,22 @@ begin
     sclk : process(i_clk)
     begin 
         if rising_edge(i_clk) then 
-            -- Default assignments (auto-clears edge flags after 1 clock cycle)
             r_rise_edge <= '0';
             r_fall_edge <= '0';
 
             if r_cur_state = ST_SPI then 
-                
                 if r_timer_cnt = 0 then 
-                    -- reload the counter
                     r_timer_cnt <= C_SCLK_SWTCH_CNT - 1;
-                    
-                    -- toggle the clock
                     r_sclk <= not r_sclk;
-                    
-                    -- set the appropriate edge flag based on the current state of r_sclk
                     if r_sclk = '0' then 
-                        r_rise_edge <= '1'; -- transitioning 0 -> 1
+                        r_rise_edge <= '1'; 
                     else
-                        r_fall_edge <= '1'; -- transitioning 1 -> 0
+                        r_fall_edge <= '1'; 
                     end if;
-                    
                 else 
-                    -- count down
                     r_timer_cnt <= r_timer_cnt - 1;
                 end if;
-                
             else 
-                -- idle
                 r_sclk      <= '0'; 
                 r_timer_cnt <= C_SCLK_SWTCH_CNT - 1;
             end if;
@@ -171,19 +181,51 @@ begin
         if rising_edge(i_clk) then 
             if i_rst = '1' then 
                 r_mosi_shft_reg <= C_READ_ANGLE_CMD;
+                r_bit_cnt       <= 0;
             else 
                 if r_cur_state = ST_SPI then 
                     if r_fall_edge = '1' then 
                         r_mosi_shft_reg <= r_mosi_shft_reg(14 downto 0) & '0';
                         r_bit_cnt       <= r_bit_cnt + 1;
                     end if; 
-                elsif w_nxt_state = ST_WAIT then 
+                elsif r_cur_state = ST_IDLE then
                     r_mosi_shft_reg <= C_READ_ANGLE_CMD;
-                else 
+                    r_bit_cnt       <= 0;
+                elsif r_cur_state = ST_CHECK then 
                     r_bit_cnt <= 0;
+                    -- Pre-load the command for the upcoming frame
+                    if r_step = CMD_PHASE then
+                        r_mosi_shft_reg <= C_READ_ANGLE_CMD;
+                    elsif r_step = READ_PHASE then
+                        if r_miso_shft_reg(14) = '1' then
+                            r_mosi_shft_reg <= C_CLR_ERR_FL_CMD;
+                        else
+                            r_mosi_shft_reg <= C_READ_ANGLE_CMD;
+                        end if;
+                    elsif r_step = CLEAR_PHASE then
+                        r_mosi_shft_reg <= C_READ_ANGLE_CMD;
+                    end if;
                 end if;
             end if;
         end if;
     end process mosi;
+
+    -- Output capture process
+    out_regs : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' then
+                o_vld <= '0';
+                o_raw_angle <= (others => '0');
+            else
+                if r_cur_state = ST_DONE then
+                    o_vld <= '1';
+                    o_raw_angle <= unsigned(r_miso_shft_reg(13 downto 0));
+                else
+                    o_vld <= '0';
+                end if;
+            end if;
+        end if;
+    end process out_regs;
 
 end architecture rtl;

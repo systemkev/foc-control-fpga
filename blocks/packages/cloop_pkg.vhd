@@ -34,7 +34,6 @@ package cloop_pkg is
     constant C_POS_KP_GAIN      : sfixed() := ;
     
     constant C_MAX_VELOCITY     : sfixed(8 downto -20) := ;
-    constant C_MIN_VELOCITY     : sfixed(8 downto -20) := ;
     constant C_DEADBAND_TICKS   : natural := ;
 
     -- Velocity loop controller gains

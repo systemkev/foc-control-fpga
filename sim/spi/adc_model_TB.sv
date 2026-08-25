@@ -1,6 +1,6 @@
 `timescale 1ns/1ns
 
-module adc_model;
+module adc_model_TB;
 
 localparam CLK_FREQ     = 50.0e6;
 localparam CLK_PRD_NS   = 1.0e9 / CLK_FREQ;
@@ -18,7 +18,7 @@ logic [13:0] o_raw_angle;
 
 int bit_counter;
 
-logic [15:0] mock_miso_payload = 16'hCCCC; 
+logic [15:0] mock_miso_payload = 16'h0CCC; 
     
 adc_spi_master u_spi_master (
     .i_clk       (i_clk),

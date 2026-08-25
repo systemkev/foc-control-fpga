@@ -52,8 +52,8 @@ begin
                 -- clamp to min/max values
                 if v_nxt_omega > C_MAX_VELOCITY then 
                     v_nxt_omega := C_MAX_VELOCITY;
-                elsif v_nxt_omega < C_MIN_VELOCITY then 
-                    v_nxt_omega := C_MIN_VELOCITY;
+                elsif v_nxt_omega < -C_MAX_VELOCITY then 
+                    v_nxt_omega := -C_MAX_VELOCITY;
                 end if;
 
                 o_vld   <= '1';

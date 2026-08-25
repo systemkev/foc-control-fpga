@@ -4,6 +4,7 @@ use IEEE.numeric_std.all;
 use IEEE.fixed_pkg.all;
 
 library work;
+use work.common_pkg.all;
 use work.cloop_pkg.all;
 
 entity clarke is
@@ -13,10 +14,12 @@ entity clarke is
 
         -- Input currents for the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
+        i_vld       : in std_logic;
         i_phases    : in t_abc_phase;
 
         -- Output from the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
+        o_vld       : out std_logic;
         o_clarke    : out t_ab_phase
     );
 end entity clarke;
@@ -30,9 +33,8 @@ architecture rtl of clarke is
     constant C_CLARKE_MTRX_12   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_MATRIX_12, 0, -15);
     
     signal r_input_phases       : t_abc_phase;
-    signal r_output_clarke      : t_ab_phase;
+    signal r_vld                 : std_logic;
 begin
-    o_clarke <= r_output_clarke;
 
     sample_input : process(i_clk)
     begin
@@ -41,12 +43,13 @@ begin
                 r_input_phases.A    <= to_sfixed(0.0, r_input_phases.A);
                 r_input_phases.B    <= to_sfixed(0.0, r_input_phases.B);
                 r_input_phases.C    <= to_sfixed(0.0, r_input_phases.C);
-                r_input_phases.vld  <= '0';
+                r_vld               <= '0';
             else
-                if i_phases.vld = '1' then 
-                    r_input_phases      <= i_phases;
+                if i_vld = '1' then 
+                    r_input_phases  <= i_phases;
+                    r_vld           <= '1';
                 else 
-                    r_input_phases.vld  <= '0';
+                    r_vld           <= '0';
                 end if;
             end if;
         end if;
@@ -66,10 +69,10 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                r_output_clarke.alpha   <= to_sfixed(0.0, r_output_clarke.alpha);
-                r_output_clarke.beta    <= to_sfixed(0.0, r_output_clarke.beta);
-                r_output_clarke.vld     <= '0';
-            elsif r_input_phases.vld = '1' then
+                o_clarke.alpha   <= to_sfixed(0.0, o_clarke.alpha);
+                o_clarke.beta    <= to_sfixed(0.0, o_clarke.beta);
+                o_vld            <= '0';
+            elsif r_vld = '1' then
                 v_ph_A_mult_row0    := r_input_phases.A * C_CLARKE_MTRX_00;
                 v_ph_B_mult_row0    := r_input_phases.B * C_CLARKE_MTRX_01;
                 v_ph_C_mult_row0    := r_input_phases.C * C_CLARKE_MTRX_02;
@@ -96,11 +99,12 @@ begin
                     v_beta  := resize(v_beta_raw, v_beta);
                 end if;
 
-                r_output_clarke.alpha   <= v_alpha;
-                r_output_clarke.beta    <= v_beta;
-                r_output_clarke.vld     <= '1';
+                o_clarke.alpha   <= v_alpha;
+                o_clarke.beta    <= v_beta;
+                
+                o_vld <= '1';
             else
-                r_output_clarke.vld     <= '0';
+                o_vld <= '0';
             end if;
         end if;
     end process calc_clarke;

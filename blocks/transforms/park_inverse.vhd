@@ -2,6 +2,7 @@ library IEEE;
 use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
 use IEEE.fixed_pkg.all;
+use work.common_pkg.all;
 use work.math_pkg.all;
 
 entity park_inverse is
@@ -11,8 +12,9 @@ entity park_inverse is
 
         i_angle     : in signed(15 downto 0);
         i_park      : in t_dq_phase;
+        i_vld       : in std_logic;
 
-        o_rdy       : out std_logic;
+        o_vld       : out std_logic;
         o_inv_park  : out t_ab_phase
     );
 end entity park_inverse;
@@ -67,9 +69,8 @@ begin
             o_sin       => w_cordic_sin        
         );
 
-    o_rdy <= '1' when r_current_state = ST_IDLE else '0';
     w_cordic_start <= '1' when (r_current_state = ST_IDLE 
-                            and i_park.vld = '1' 
+                            and i_vld = '1' 
                             and w_cordic_rdy = '1') 
                         else '0';
 
@@ -90,8 +91,7 @@ begin
 
         case r_current_state is
             when ST_IDLE => 
-                -- Fixed: Look at i_park.vld
-                if i_park.vld = '1' and w_cordic_rdy = '1' then 
+                if i_vld = '1' and w_cordic_rdy = '1' then 
                     w_next_state <= ST_FETCH;
                 end if;
             when ST_FETCH => 
@@ -113,12 +113,10 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                -- Fixed: t_park_record uses d and q
-                r_input_park        <= (vld => '0', 
-                                        d   => (others => '0'), 
+                r_input_park        <= (d   => (others => '0'), 
                                         q   => (others => '0'));
                 r_input_angle       <= (others => '0');
-            elsif i_park.vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
+            elsif i_vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
                 r_input_park        <= i_park;
                 r_input_angle       <= i_angle;
             end if;
@@ -178,18 +176,15 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                -- Fixed: Target o_inv_park and use clarke struct members
-                o_inv_park  <= (vld   => '0', 
-                                alpha => (others => '0'), 
+                o_vld       <= '0';
+                o_inv_park  <= (alpha => (others => '0'), 
                                 beta  => (others => '0'));
             elsif r_current_state = ST_OUTPUT then
-                o_inv_park  <= (vld   => '1', 
-                                alpha => r_alpha_inv_park, 
+                o_vld       <= '1';
+                o_inv_park  <= (alpha => r_alpha_inv_park, 
                                 beta  => r_beta_inv_park);
             else 
-                o_inv_park  <= (vld   => '0', 
-                                alpha => (others => '0'), 
-                                beta  => (others => '0'));
+                o_vld       <= '0';
             end if;
         end if;
     end process drive_output;

@@ -57,10 +57,10 @@ begin
             if i_rst = '1' then 
                 r_pwm_counter       <= (others => '0');
             else 
-                if r_pwm_counter = C_CLKS_IN_PWM_PERIOD-1 then
+                if r_pwm_counter = C_CLKS_IN_PWM_PERIOD - 1 then
                     r_pwm_counter   <= (others => '0');
                 else
-                    r_pwm_counter   <= r_pwm_counter+1;
+                    r_pwm_counter   <= r_pwm_counter + 1;
                 end if;
             end if;
         end if;

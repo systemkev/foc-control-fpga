@@ -4,6 +4,7 @@ use IEEE.numeric_std.all;
 use IEEE.fixed_pkg.all;
 
 library work;
+use work.common_pkg.all;
 use work.cloop_pkg.all;
 
 entity clarke_inverse is
@@ -13,10 +14,12 @@ entity clarke_inverse is
 
         -- Input currents for the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
+        i_vld           : in std_logic;
         i_alpha_beta    : in t_ab_phase;
 
         -- Output from the Clarke transformation
         -- Valid range [-5A, 5A], Q3.12
+        o_vld           : out std_logic;
         o_inv_clarke    : out t_abc_phase
     );
 end entity clarke_inverse;
@@ -30,6 +33,7 @@ architecture rtl of clarke_inverse is
     constant C_CLARKE_INV_MTRX_21   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_21, 0, -15);
     
     signal r_input_alpha_beta       : t_ab_phase;
+    signal r_vld                    : std_logic;
 begin
     sample_input : process(i_clk)
     begin
@@ -37,12 +41,13 @@ begin
             if i_rst = '1' then
                 r_input_alpha_beta.alpha    <= to_sfixed(0.0, r_input_alpha_beta.alpha);
                 r_input_alpha_beta.beta     <= to_sfixed(0.0, r_input_alpha_beta.beta);
-                r_input_alpha_beta.vld      <= '0';
+                r_vld                       <= '0';
             else
-                if i_alpha_beta.vld = '1' then 
+                if i_vld = '1' then 
                     r_input_alpha_beta      <= i_alpha_beta;
+                    r_vld                   <= '1';
                 else 
-                    r_input_alpha_beta.vld  <= '0';
+                    r_vld                   <= '0';
                 end if;
             end if;
         end if;
@@ -69,8 +74,8 @@ begin
                 o_inv_clarke.A   <= to_sfixed(0.0, o_inv_clarke.A);
                 o_inv_clarke.B   <= to_sfixed(0.0, o_inv_clarke.B);
                 o_inv_clarke.C   <= to_sfixed(0.0, o_inv_clarke.C);
-                o_inv_clarke.vld <= '0';
-            elsif r_input_alpha_beta.vld = '1' then
+                o_vld            <= '0';
+            elsif r_vld = '1' then
                 v_mtrx_00   := resize(C_CLARKE_INV_MTRX_00 * r_input_alpha_beta.alpha, v_mtrx_00);
                 v_mtrx_01   := resize(C_CLARKE_INV_MTRX_01 * r_input_alpha_beta.beta,  v_mtrx_01);
                 v_mtrx_10   := resize(C_CLARKE_INV_MTRX_10 * r_input_alpha_beta.alpha, v_mtrx_10);
@@ -109,9 +114,10 @@ begin
                 o_inv_clarke.A <= v_ph_a; 
                 o_inv_clarke.B <= v_ph_b; 
                 o_inv_clarke.C <= v_ph_c; 
-                o_inv_clarke.vld <= '1';
+                
+                o_vld <= '1';
             else
-                o_inv_clarke.vld <= '0';
+                o_vld <= '0';
             end if;
         end if;
     end process calc_clarke;

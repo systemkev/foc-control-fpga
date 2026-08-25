@@ -2,6 +2,7 @@ library IEEE;
 use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
 use IEEE.fixed_pkg.all;
+use work.common_pkg.all;
 use work.math_pkg.all;
 
 entity park is
@@ -9,11 +10,12 @@ entity park is
         i_clk       : in std_logic;
         i_rst       : in std_logic;
 
-        i_clarke    : in t_clarke_record;
+        i_clarke    : in t_ab_phase;
         i_angle     : in signed(15 downto 0);
+        i_vld       : in std_logic;
 
-        o_rdy       : out std_logic;
-        o_park      : out t_park_record
+        o_vld       : out std_logic;
+        o_park      : out t_dq_phase
     );
 end entity park;
 
@@ -22,7 +24,7 @@ architecture rtl of park is
     --      i_d = i_a cos(phi) + i_b sin(phi)
     --      i_q = i_b cos(phi) - i_a sin(phi)
     --          where a = alpha, b = beta
-    signal r_input_clarke       : t_clarke_record;
+    signal r_input_clarke       : t_ab_phase;
     signal r_input_angle        : signed(15 downto 0);
 
     signal r_cordic_start       : std_logic;
@@ -55,8 +57,6 @@ architecture rtl of park is
     signal r_current_state      : t_park_states;
     signal w_next_state         : t_park_states;
 begin
-    o_rdy <= '1' when r_current_state = ST_IDLE and w_cordic_rdy = '1' else '0';
-
     fsm : process(i_clk)
     begin 
         if rising_edge(i_clk) then
@@ -74,7 +74,7 @@ begin
 
         case r_current_state is
             when ST_IDLE => 
-                if i_clarke.vld = '1' and w_cordic_rdy = '1' then 
+                if i_vld = '1' and w_cordic_rdy = '1' then 
                     w_next_state <= ST_FETCH;
                 end if;
             when ST_FETCH => 
@@ -108,11 +108,10 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                r_input_clarke      <= (vld   => '0', 
-                                        alpha => (others => '0'), 
+                r_input_clarke      <= (alpha => (others => '0'), 
                                         beta  => (others => '0'));
                 r_input_angle       <= (others => '0');
-            elsif i_clarke.vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
+            elsif i_vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
                 r_input_clarke      <= i_clarke;
                 r_input_angle       <= i_angle;
                 r_cordic_start      <= '1';
@@ -174,15 +173,15 @@ begin
     begin 
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                o_park  <= (vld => '0', 
-                            d => (others => '0'), 
+                o_vld   <= '0';
+                o_park  <= (d => (others => '0'), 
                             q => (others => '0'));
             elsif r_current_state = ST_OUTPUT then
-                o_park  <= (vld => '1', 
-                            d => r_d_park, 
+                o_vld   <= '1';
+                o_park  <= (d => r_d_park, 
                             q => r_q_park);
             else 
-                o_park.vld <= '0';
+                o_vld   <= '0';
             end if;
         end if;
     end process drive_output;

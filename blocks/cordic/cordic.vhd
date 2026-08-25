@@ -17,7 +17,7 @@ entity cordic is
         o_rdy           : out std_logic;                        
         
         -- 16-bit angle: -32768 = -180 deg, +32767 = +179.99 deg.
-        i_angle         : in signed(15 downto 0);             
+        i_angle         : in t_cordic_inputs;             
         
         -- Outputs
         o_vld           : out std_logic;                        
@@ -28,7 +28,7 @@ end entity cordic;
 
 architecture rtl of cordic is 
     -- Pre-computed Arctan Table
-    type t_arctan_table is array(0 to C_CORDIC_NUM_OF_ITERS-1) of signed(15 downto 0);
+    type t_arctan_table is array(0 to C_CORDIC_NUM_OF_ITERS-1) of t_cordic_inputs;
 
     function init_arctan_table return t_arctan_table is
         variable v_arctan_table : t_arctan_table;
@@ -51,11 +51,11 @@ architecture rtl of cordic is
     signal r_iter       : integer range 0 to C_CORDIC_NUM_OF_ITERS;
     signal r_x          : sfixed(1 downto -19);
     signal r_y          : sfixed(1 downto -19);
-    signal r_z          : signed(15 downto 0);
+    signal r_z          : t_cordic_inputs;
     signal r_inv        : std_logic;
 
     signal w_inv_start      : std_logic;
-    signal w_angl_err_start : signed(15 downto 0);
+    signal w_angl_err_start : t_cordic_inputs;
 
 begin 
     -- Combinational quadrant mapping (folds Q2 and Q3 into Q1 and Q4)
