@@ -10,7 +10,8 @@ package uart_pkg is
     constant C_OVERSAMPLE_MULT  : integer   := 16;
     constant C_ACC_WIDTH        : integer   := 32;
     constant C_OVERSAMP_RATE    : real      := C_BAUD_RATE * real(C_OVERSAMPLE_MULT);
-    constant C_STEP_SIZE        : integer   := integer(ceil(C_OVERSAMP_RATE / C_CLK_FREQ * (2.0**C_ACC_WIDTH)));
+    constant C_STEP_SIZE        : integer   := integer(ceil(C_OVERSAMP_RATE / C_CLK_FREQ * (2.0**C_ACC_WIDTH)));    -- oversample step size
+    constant C_STEP_SIZE_STD    : integer   := integer(ceil(C_BAUD_RATE / C_CLK_FREQ * (2.0**C_ACC_WIDTH)));        -- regular step size (no oversampling)
     constant C_CMD_NUM_BYTES    : integer   := 8;
     constant C_CMD_TOP_BIT      : integer   := C_CMD_NUM_BYTES * 8;
     
@@ -20,7 +21,8 @@ package uart_pkg is
     constant C_WRITE_CMD        : std_logic_vector(7 downto 0) := x"02";
     
     type t_uart_parser_states is (ST_IDLE, ST_CMD, ST_ADDR, ST_DATA, ST_CHECK, ST_EXE);
-    type t_uart_fsm_states is (ST_IDLE, ST_START, ST_RUN, ST_STOP, ST_DONE);
+    type t_uart_fsm_states    is (ST_IDLE, ST_START, ST_RUN, ST_STOP, ST_DONE);
+    type t_uart_serial_states is (ST_IDLE, ST_SERIALIZE, ST_DONE);
     subtype t_cmd_frame is std_logic_vector(C_CMD_TOP_BIT - 1 downto 0);
 
     function calc_crc8_56bit(data_in : std_logic_vector(55 downto 0)) return std_logic_vector;

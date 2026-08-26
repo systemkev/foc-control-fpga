@@ -15,7 +15,7 @@ entity reg_file is
         i_data      : in std_logic_vector(31 downto 0);
         i_addr      : in std_logic_vector(7 downto 0);
 
-        -- output to UART transmitter
+        -- output to UART serializer/transmitter
         o_vld       : out std_logic;
         o_data      : out std_logic_vector(31 downto 0);
         o_addr      : out std_logic_vector(7 downto 0)

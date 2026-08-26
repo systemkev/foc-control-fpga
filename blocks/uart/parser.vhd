@@ -3,6 +3,7 @@ use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
 use work.common_pkg.all;
 use work.uart_pkg.all;
+use work.reg_pkg.all;
 
 entity parser is
     port (
@@ -27,7 +28,7 @@ architecture rtl of parser is
     signal r_ptr  : integer range 0 to 4;
     signal r_addr : std_logic_vector(7 downto 0);
     signal r_cmd  : std_logic_vector(7 downto 0);
-    signal r_data : std_logic_vector(31 downto 0);
+    signal r_data : std_logic_vector(39 downto 0);
 
     signal w_crc_vld : std_logic;
 
@@ -81,7 +82,7 @@ begin
                 end if;
 
             when ST_CHECK => 
-                if w_crc_valid = '1' then 
+                if w_crc_vld = '1' then 
                     w_nxt_state <= ST_EXE;
                 else 
                     w_nxt_state <= ST_IDLE;
@@ -105,7 +106,6 @@ begin
                     r_cmd <= C_READ_CMD;
                 elsif i_byte = C_WRITE_CMD then
                     r_cmd <= C_WRITE_CMD;
-                else 
                 end if;
             elsif r_cur_state = ST_IDLE then 
                 r_cmd       <= (others => '0');
@@ -119,7 +119,7 @@ begin
             if i_rst = '1' then 
                 r_addr      <= (others => '0');
             elsif r_cur_state = ST_ADDR and i_vld = '1' then 
-                if unsigned(i_byte, 8) <= unsigned(C_LAST_ADDR, 8) then 
+                if unsigned(i_byte) <= unsigned(C_LAST_ADDR) then 
                     r_addr  <= i_byte;
                 end if;
             elsif r_cur_state = ST_IDLE then 
@@ -139,7 +139,7 @@ begin
                     r_ptr   <= r_ptr + 1;
                     r_data  <= r_data(31 downto 0) & i_byte;
                 end if;
-            else 
+            elsif r_cur_state = ST_IDLE then 
                 r_ptr       <= 0;
                 r_data      <= (others => '0');
             end if;

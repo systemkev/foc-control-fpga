@@ -1,7 +1,7 @@
 library IEEE;
 use IEEE.std_logic_1164.all;
 
-package body reg_pkg is
+package reg_pkg is
     
     constant C_NUM_REGISTERS    : natural := 11;
 
@@ -20,4 +20,4 @@ package body reg_pkg is
 
     constant C_LAST_ADDR        : std_logic_vector(7 downto 0) := x"0A";
     
-end package body reg_pkg;
+end package reg_pkg;

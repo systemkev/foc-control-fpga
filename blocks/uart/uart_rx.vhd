@@ -25,7 +25,6 @@ architecture rtl of uart_rx is
     signal r_rx_shft_reg    : std_logic_vector(7 downto 0);
     signal r_rx_bit_cnt     : natural range 0 to 10  := 0;  
     signal r_rx_tick_cnt    : natural range 0 to 16 := 0;   
-    signal r_last_rx        : std_logic;
 
     -- Baud rate generation 
     signal r_rx_acc         : unsigned(C_ACC_WIDTH downto 0);
@@ -98,7 +97,6 @@ begin
                 end if;
 
             when ST_STOP =>
-                -- Now it will actually wait for tick 15 of the STOP state!
                 if r_baud_tick = '1' and r_rx_tick_cnt = 15 then 
                     if r_stop_pass = '1' then 
                         w_nxt_state <= ST_DONE;
@@ -120,13 +118,11 @@ begin
         if rising_edge(i_clk) then 
             if i_rst = '1' then
                 r_rx_acc        <= (others => '0');
-                r_last_rx       <= '1';
                 r_ovf_flag      <= '0';
                 r_baud_tick     <= '0';
             elsif r_cur_state = ST_START or r_cur_state = ST_RUN or r_cur_state = ST_STOP then 
                 r_rx_acc        <= r_rx_acc + C_STEP_INC;
                 r_ovf_flag      <= r_rx_acc(32);
-                r_last_rx       <= r_rx_sync;    -- used to detect falling edge (start of frame)
 
                 if (r_ovf_flag = '1' and r_rx_acc(32) = '0') or 
                    (r_ovf_flag = '0' and r_rx_acc(32) = '1') then 

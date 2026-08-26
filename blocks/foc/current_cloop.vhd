@@ -18,7 +18,14 @@ entity current_cloop is
 
         -- Outputs 
         o_vld           : out std_logic;
-        o_ph_voltage    : out t_dq_volt
+        o_ph_voltage    : out t_dq_volt;
+
+        -- Register file inputs
+        REG_FOC_KP_GAIN     : in sfixed(7 downto -24); 
+        REG_FOC_KI_GAIN     : in sfixed(3 downto -28);
+        REG_FOC_WINDUP_MAX  : in sfixed(11 downto -20);
+        REG_FOC_VOLTAGE_MAX : in sfixed(11 downto -20)
+
     );
 end entity current_cloop;
 
@@ -77,10 +84,10 @@ begin
                 r_gain_prop <= (d => (others => '0'), q => (others => '0'));
                 r_gain_intg <= (d => (others => '0'), q => (others => '0'));
             elsif r_vld(1) = '1' then 
-                r_gain_prop.d <= resize(r_error_curr.d * C_KP_PROP_GAIN, r_gain_prop.d);
-                r_gain_prop.q <= resize(r_error_curr.q * C_KP_PROP_GAIN, r_gain_prop.q);
-                r_gain_intg.d <= resize(r_error_curr.d * C_KI_INTG_GAIN, r_gain_intg.d);
-                r_gain_intg.q <= resize(r_error_curr.q * C_KI_INTG_GAIN, r_gain_intg.q);
+                r_gain_prop.d <= resize(r_error_curr.d * REG_FOC_KP_GAIN, r_gain_prop.d);
+                r_gain_prop.q <= resize(r_error_curr.q * REG_FOC_KP_GAIN, r_gain_prop.q);
+                r_gain_intg.d <= resize(r_error_curr.d * REG_FOC_KI_GAIN, r_gain_intg.d);
+                r_gain_intg.q <= resize(r_error_curr.q * REG_FOC_KI_GAIN, r_gain_intg.q);
             end if;
         end if;
     end process gains;
@@ -95,18 +102,18 @@ begin
                 v_intg_accum.d := resize(r_gain_intg.d + r_intg_accum.d, v_intg_accum.d);
                 v_intg_accum.q := resize(r_gain_intg.q + r_intg_accum.q, v_intg_accum.q);
 
-                if v_intg_accum.d > C_WINDUP_MAX then 
-                    r_intg_accum.d <= C_WINDUP_MAX;
-                elsif v_intg_accum.d < -C_WINDUP_MAX then 
-                    r_intg_accum.d <= resize(-C_WINDUP_MAX, r_intg_accum.d);
+                if v_intg_accum.d > REG_FOC_WINDUP_MAX then 
+                    r_intg_accum.d <= REG_FOC_WINDUP_MAX;
+                elsif v_intg_accum.d < -REG_FOC_WINDUP_MAX then 
+                    r_intg_accum.d <= resize(-REG_FOC_WINDUP_MAX, r_intg_accum.d);
                 else
                     r_intg_accum.d <= v_intg_accum.d;
                 end if;
 
-                if v_intg_accum.q > C_WINDUP_MAX then 
-                    r_intg_accum.q <= C_WINDUP_MAX;
-                elsif v_intg_accum.q < -C_WINDUP_MAX then 
-                    r_intg_accum.q <= resize(-C_WINDUP_MAX, r_intg_accum.q);
+                if v_intg_accum.q > REG_FOC_WINDUP_MAX then 
+                    r_intg_accum.q <= REG_FOC_WINDUP_MAX;
+                elsif v_intg_accum.q < -REG_FOC_WINDUP_MAX then 
+                    r_intg_accum.q <= resize(-REG_FOC_WINDUP_MAX, r_intg_accum.q);
                 else
                     r_intg_accum.q <= v_intg_accum.q;
                 end if;
@@ -128,18 +135,18 @@ begin
                     v_output_volt.d := r_intg_accum.d + r_gain_prop.d;
                     v_output_volt.q := r_intg_accum.q + r_gain_prop.q;
 
-                    if v_output_volt.d > C_WINDUP_MAX then 
-                        o_ph_voltage.d <= C_WINDUP_MAX;
-                    elsif v_output_volt.d < -C_WINDUP_MAX then 
-                        o_ph_voltage.d <= resize(-C_WINDUP_MAX, o_ph_voltage.d);
+                    if v_output_volt.d > REG_FOC_VOLTAGE_MAX then 
+                        o_ph_voltage.d <= REG_FOC_VOLTAGE_MAX;
+                    elsif v_output_volt.d < -REG_FOC_VOLTAGE_MAX then 
+                        o_ph_voltage.d <= resize(-REG_FOC_VOLTAGE_MAX, o_ph_voltage.d);
                     else
                         o_ph_voltage.d <= v_output_volt.d;
                     end if;
 
-                    if v_output_volt.q > C_WINDUP_MAX then 
-                        o_ph_voltage.q <= C_WINDUP_MAX;
-                    elsif v_output_volt.q < -C_WINDUP_MAX then 
-                        o_ph_voltage.q <= resize(-C_WINDUP_MAX, o_ph_voltage.q);
+                    if v_output_volt.q > REG_FOC_VOLTAGE_MAX then 
+                        o_ph_voltage.q <= REG_FOC_VOLTAGE_MAX;
+                    elsif v_output_volt.q < -REG_FOC_VOLTAGE_MAX then 
+                        o_ph_voltage.q <= resize(-REG_FOC_VOLTAGE_MAX, o_ph_voltage.q);
                     else
                         o_ph_voltage.q <= v_output_volt.q;
                     end if;
