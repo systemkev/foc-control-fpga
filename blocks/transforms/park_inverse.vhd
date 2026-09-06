@@ -1,191 +1,116 @@
-library IEEE;
-use IEEE.std_logic_1164.all;
-use IEEE.numeric_std.all;
-use IEEE.fixed_pkg.all;
-use work.common_pkg.all;
-use work.math_pkg.all;
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 entity park_inverse is
     port (
         i_clk       : in std_logic;
         i_rst       : in std_logic;
 
-        i_angle     : in signed(15 downto 0);
-        i_park      : in t_dq_phase;
         i_vld       : in std_logic;
+        i_d         : in signed(17 downto 0);
+        i_q         : in signed(17 downto 0);
+        i_cos       : in signed(15 downto 0);
+        i_sin       : in signed(15 downto 0);
 
         o_vld       : out std_logic;
-        o_inv_park  : out t_ab_phase
+        o_alpha     : out signed(17 downto 0);
+        o_beta      : out signed(17 downto 0)
     );
 end entity park_inverse;
 
 architecture rtl of park_inverse is
-    -- The Inverse Park transform implements the following math:
-    --      V_alpha = V_d * cos(theta) - V_q * sin(theta)
-    --      V_beta  = V_d * sin(theta) + V_q * cos(theta)
 
-    signal r_input_park         : t_dq_phase;
-    signal r_input_angle        : signed(15 downto 0);
+    -- Voltage: Q5.12, sin/cos: Q1.14
+    subtype t_voltage_q12 is signed(17 downto 0);
+    subtype t_trig_q14    is signed(15 downto 0);
+    subtype t_product_q26 is signed(33 downto 0);
+    subtype t_sum_q26     is signed(34 downto 0);
 
-    signal w_cordic_start       : std_logic;
-    signal w_cordic_vld         : std_logic;
-    signal w_cordic_rdy         : std_logic;
-    signal w_cordic_cos         : sfixed(1 downto -14);
-    signal w_cordic_sin         : sfixed(1 downto -14);
+    signal r_d   : t_voltage_q12 := (others => '0');
+    signal r_q   : t_voltage_q12 := (others => '0');
+    signal r_cos : t_trig_q14    := (others => '0');
+    signal r_sin : t_trig_q14    := (others => '0');
+    signal r_vld : std_logic := '0';
 
-    signal r_cordic_cos         : sfixed(1 downto -14);
-    signal r_cordic_sin         : sfixed(1 downto -14);
+    function sat_q26_to_q12(
+        x : t_sum_q26
+    ) return t_voltage_q12 is
+        variable v : t_sum_q26;
+    begin
+        v := shift_right(x, 14);
 
-    -- Corrected Inverse Park transformation intermediates
-    signal r_d_cos_term         : sfixed(5 downto -26);
-    signal r_q_sin_term         : sfixed(5 downto -26);
-    signal r_d_sin_term         : sfixed(5 downto -26);
-    signal r_q_cos_term         : sfixed(5 downto -26);
+        if v > to_signed(131071, v'length) then
+            return to_signed(131071, t_voltage_q12'length);
+        elsif v < to_signed(-131072, v'length) then
+            return to_signed(-131072, t_voltage_q12'length);
+        else
+            return resize(v, t_voltage_q12'length);
+        end if;
+    end function;
 
-    signal r_alpha_inv_park     : sfixed(3 downto -12);
-    signal r_beta_inv_park      : sfixed(3 downto -12);
-
-    -- FSM states
-    type t_park_states is (
-        ST_IDLE,   
-        ST_FETCH,  
-        ST_MULT,
-        ST_ADD,
-        ST_OUTPUT
-    );
-
-    signal r_current_state      : t_park_states;
-    signal w_next_state         : t_park_states;
 begin
-    u_cordic : entity work.cordic
-        port map (
-            i_clk       => i_clk,
-            i_rst       => i_rst,
-            i_vld       => w_cordic_start,
-            o_rdy       => w_cordic_rdy,
-            i_angle     => r_input_angle,
-            o_vld       => w_cordic_vld,
-            o_cos       => w_cordic_cos,
-            o_sin       => w_cordic_sin        
-        );
 
-    w_cordic_start <= '1' when (r_current_state = ST_IDLE 
-                            and i_vld = '1' 
-                            and w_cordic_rdy = '1') 
-                        else '0';
-
-    fsm : process(i_clk)
-    begin 
-        if rising_edge(i_clk) then
-            if i_rst = '1' then 
-                r_current_state <= ST_IDLE;
-            else
-                r_current_state <= w_next_state;
-            end if;
-        end if;
-    end process fsm;
-
-    fsm_advance : process(all)
-    begin 
-        w_next_state    <= r_current_state;
-
-        case r_current_state is
-            when ST_IDLE => 
-                if i_vld = '1' and w_cordic_rdy = '1' then 
-                    w_next_state <= ST_FETCH;
-                end if;
-            when ST_FETCH => 
-                if w_cordic_vld = '1' then 
-                    w_next_state <= ST_MULT;
-                end if;
-            when ST_MULT => 
-                w_next_state <= ST_ADD;
-            when ST_ADD => 
-                w_next_state <= ST_OUTPUT;
-            when ST_OUTPUT =>
-                w_next_state <= ST_IDLE;
-            when others => 
-                w_next_state <= ST_IDLE;
-        end case;
-    end process fsm_advance;
-    
-    register_input : process(i_clk)
-    begin 
-        if rising_edge(i_clk) then
-            if i_rst = '1' then
-                r_input_park        <= (d   => (others => '0'), 
-                                        q   => (others => '0'));
-                r_input_angle       <= (others => '0');
-            elsif i_vld = '1' and r_current_state = ST_IDLE and w_cordic_rdy = '1' then 
-                r_input_park        <= i_park;
-                r_input_angle       <= i_angle;
-            end if;
-        end if;
-    end process register_input;
-
-    register_cordic : process(i_clk)
-    begin 
-        if rising_edge(i_clk) then
-            if i_rst = '1' then
-                r_cordic_cos        <= (others => '0');
-                r_cordic_sin        <= (others => '0');
-            elsif r_current_state = ST_FETCH then
-                if w_cordic_vld = '1' then
-                    r_cordic_cos    <= w_cordic_cos;
-                    r_cordic_sin    <= w_cordic_sin;
-                end if;
-            end if;
-        end if;
-    end process register_cordic;
-
-    -- Execute multiplication phase
-    calc_intermediate : process(i_clk) 
-    begin 
-        if rising_edge(i_clk) then
-            if i_rst = '1' then
-                r_d_cos_term    <= (others => '0');
-                r_q_sin_term    <= (others => '0');
-                r_d_sin_term    <= (others => '0');
-                r_q_cos_term    <= (others => '0');
-            elsif r_current_state = ST_MULT then 
-                r_d_cos_term    <= resize(r_input_park.d * r_cordic_cos, r_d_cos_term);
-                r_q_sin_term    <= resize(r_input_park.q * r_cordic_sin, r_q_sin_term);
-                r_d_sin_term    <= resize(r_input_park.d * r_cordic_sin, r_d_sin_term);
-                r_q_cos_term    <= resize(r_input_park.q * r_cordic_cos, r_q_cos_term);
-            end if;
-        end if;
-    end process calc_intermediate;
-
-    -- execute addition/subtraction phase
-    add_intermediates : process(i_clk)
+    sample_input : process(i_clk)
     begin
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                r_alpha_inv_park    <= (others => '0');
-                r_beta_inv_park     <= (others => '0');
-            elsif r_current_state = ST_ADD then
-                -- Fixed: Resize targets refer to the actual target signals
-                r_alpha_inv_park    <= resize(r_d_cos_term - r_q_sin_term, r_alpha_inv_park);
-                r_beta_inv_park     <= resize(r_d_sin_term + r_q_cos_term, r_beta_inv_park);
+                r_d   <= (others => '0');
+                r_q   <= (others => '0');
+                r_cos <= (others => '0');
+                r_sin <= (others => '0');
+                r_vld <= '0';
+            else
+                if i_vld = '1' then
+                    r_d   <= i_d;
+                    r_q   <= i_q;
+                    r_cos <= i_cos;
+                    r_sin <= i_sin;
+                    r_vld <= '1';
+                else
+                    r_vld <= '0';
+                end if;
             end if;
         end if;
-    end process add_intermediates;
+    end process;
 
-    -- Drive Output Port
-    drive_output : process(i_clk)
-    begin 
+    calc_inverse_park : process(i_clk)
+        variable v_d_cos : t_product_q26;
+        variable v_q_sin : t_product_q26;
+        variable v_d_sin : t_product_q26;
+        variable v_q_cos : t_product_q26;
+
+        variable v_alpha_sum : t_sum_q26;
+        variable v_beta_sum  : t_sum_q26;
+    begin
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                o_vld       <= '0';
-                o_inv_park  <= (alpha => (others => '0'), 
-                                beta  => (others => '0'));
-            elsif r_current_state = ST_OUTPUT then
-                o_vld       <= '1';
-                o_inv_park  <= (alpha => r_alpha_inv_park, 
-                                beta  => r_beta_inv_park);
-            else 
-                o_vld       <= '0';
+                o_alpha <= (others => '0');
+                o_beta  <= (others => '0');
+                o_vld   <= '0';
+
+            elsif r_vld = '1' then
+                v_d_cos := r_d * r_cos;
+                v_q_sin := r_q * r_sin;
+                v_d_sin := r_d * r_sin;
+                v_q_cos := r_q * r_cos;
+
+                v_alpha_sum :=
+                    resize(v_d_cos, t_sum_q26'length) -
+                    resize(v_q_sin, t_sum_q26'length);
+
+                v_beta_sum :=
+                    resize(v_d_sin, t_sum_q26'length) +
+                    resize(v_q_cos, t_sum_q26'length);
+
+                o_alpha <= sat_q26_to_q12(v_alpha_sum);
+                o_beta  <= sat_q26_to_q12(v_beta_sum);
+
+                o_vld <= '1';
+            else
+                o_vld <= '0';
             end if;
         end if;
-    end process drive_output;
+    end process;
+
 end architecture rtl;

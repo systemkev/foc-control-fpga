@@ -1,124 +1,118 @@
-library IEEE;
-use IEEE.std_logic_1164.all;
-use IEEE.numeric_std.all;
-use IEEE.fixed_pkg.all;
-
-library work;
-use work.common_pkg.all;
-use work.cloop_pkg.all;
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 entity clarke_inverse is
     port (
         i_clk       : in std_logic;
         i_rst       : in std_logic;
 
-        -- Input currents for the Clarke transformation
-        -- Valid range [-5A, 5A], Q3.12
-        i_vld           : in std_logic;
-        i_alpha_beta    : in t_ab_phase;
+        i_vld       : in std_logic;
+        i_alpha     : in signed(17 downto 0);
+        i_beta      : in signed(17 downto 0);
 
-        -- Output from the Clarke transformation
-        -- Valid range [-5A, 5A], Q3.12
-        o_vld           : out std_logic;
-        o_inv_clarke    : out t_abc_phase
+        o_vld       : out std_logic;
+        o_phases_A  : out signed(17 downto 0);
+        o_phases_B  : out signed(17 downto 0);
+        o_phases_C  : out signed(17 downto 0)
     );
 end entity clarke_inverse;
 
 architecture rtl of clarke_inverse is
-    constant C_CLARKE_INV_MTRX_00   : sfixed(1 downto -14)  := to_sfixed(C_CLARKE_INV_MX_00, 1, -14);
-    constant C_CLARKE_INV_MTRX_01   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_01, 0, -15);
-    constant C_CLARKE_INV_MTRX_10   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_10, 0, -15);
-    constant C_CLARKE_INV_MTRX_11   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_11, 0, -15);
-    constant C_CLARKE_INV_MTRX_20   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_20, 0, -15);
-    constant C_CLARKE_INV_MTRX_21   : sfixed(0 downto -15)  := to_sfixed(C_CLARKE_INV_MX_21, 0, -15);
-    
-    signal r_input_alpha_beta       : t_ab_phase;
-    signal r_vld                    : std_logic;
+
+    -- Voltage: Q5.12, coefficient: Q2.20
+    subtype t_voltage_q12 is signed(17 downto 0);
+    subtype t_coeff_q20   is signed(22 downto 0);
+    subtype t_product_q32 is signed(40 downto 0);
+    subtype t_sum_q32     is signed(41 downto 0);
+
+    constant C_NEG_HALF : t_coeff_q20 :=
+        to_signed(-524288, t_coeff_q20'length);
+
+    constant C_POS_SQRT3_HALF : t_coeff_q20 :=
+        to_signed(908093, t_coeff_q20'length);
+
+    constant C_NEG_SQRT3_HALF : t_coeff_q20 :=
+        to_signed(-908093, t_coeff_q20'length);
+
+    signal r_alpha : t_voltage_q12 := (others => '0');
+    signal r_beta  : t_voltage_q12 := (others => '0');
+    signal r_vld   : std_logic := '0';
+
+    function sat_q32_to_q12(
+        x : t_sum_q32
+    ) return t_voltage_q12 is
+        variable v : t_sum_q32;
+    begin
+        v := shift_right(x, 20);
+
+        if v > to_signed(131071, v'length) then
+            return to_signed(131071, t_voltage_q12'length);
+        elsif v < to_signed(-131072, v'length) then
+            return to_signed(-131072, t_voltage_q12'length);
+        else
+            return resize(v, t_voltage_q12'length);
+        end if;
+    end function;
+
 begin
+
     sample_input : process(i_clk)
     begin
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                r_input_alpha_beta.alpha    <= to_sfixed(0.0, r_input_alpha_beta.alpha);
-                r_input_alpha_beta.beta     <= to_sfixed(0.0, r_input_alpha_beta.beta);
-                r_vld                       <= '0';
+                r_alpha <= (others => '0');
+                r_beta  <= (others => '0');
+                r_vld   <= '0';
             else
-                if i_vld = '1' then 
-                    r_input_alpha_beta      <= i_alpha_beta;
-                    r_vld                   <= '1';
-                else 
-                    r_vld                   <= '0';
+                if i_vld = '1' then
+                    r_alpha <= i_alpha;
+                    r_beta  <= i_beta;
+                    r_vld   <= '1';
+                else
+                    r_vld <= '0';
                 end if;
             end if;
         end if;
-    end process sample_input;
+    end process;
 
-    calc_clarke : process(i_clk)
-        variable v_mtrx_00          : sfixed(4 downto -27);
-        variable v_mtrx_01          : sfixed(4 downto -27);
-        variable v_mtrx_10          : sfixed(4 downto -27);
-        variable v_mtrx_11          : sfixed(4 downto -27);
-        variable v_mtrx_20          : sfixed(4 downto -27);
-        variable v_mtrx_21          : sfixed(4 downto -27);
+    calc_inverse_clarke : process(i_clk)
+        variable v_alpha_neg_half : t_product_q32;
+        variable v_beta_pos       : t_product_q32;
+        variable v_beta_neg       : t_product_q32;
 
-        variable v_ph_raw_a         : sfixed(5 downto -27);
-        variable v_ph_raw_b         : sfixed(5 downto -27);
-        variable v_ph_raw_c         : sfixed(5 downto -27);
-
-        variable v_ph_a             : sfixed(3 downto -12);
-        variable v_ph_b             : sfixed(3 downto -12);
-        variable v_ph_c             : sfixed(3 downto -12);
-    begin 
+        variable v_phase_b_sum    : t_sum_q32;
+        variable v_phase_c_sum    : t_sum_q32;
+    begin
         if rising_edge(i_clk) then
             if i_rst = '1' then
-                o_inv_clarke.A   <= to_sfixed(0.0, o_inv_clarke.A);
-                o_inv_clarke.B   <= to_sfixed(0.0, o_inv_clarke.B);
-                o_inv_clarke.C   <= to_sfixed(0.0, o_inv_clarke.C);
-                o_vld            <= '0';
+                o_phases_A <= (others => '0');
+                o_phases_B <= (others => '0');
+                o_phases_C <= (others => '0');
+                o_vld      <= '0';
+
             elsif r_vld = '1' then
-                v_mtrx_00   := resize(C_CLARKE_INV_MTRX_00 * r_input_alpha_beta.alpha, v_mtrx_00);
-                v_mtrx_01   := resize(C_CLARKE_INV_MTRX_01 * r_input_alpha_beta.beta,  v_mtrx_01);
-                v_mtrx_10   := resize(C_CLARKE_INV_MTRX_10 * r_input_alpha_beta.alpha, v_mtrx_10);
-                v_mtrx_11   := resize(C_CLARKE_INV_MTRX_11 * r_input_alpha_beta.beta,  v_mtrx_11);
-                v_mtrx_20   := resize(C_CLARKE_INV_MTRX_20 * r_input_alpha_beta.alpha, v_mtrx_20);
-                v_mtrx_21   := resize(C_CLARKE_INV_MTRX_21 * r_input_alpha_beta.beta,  v_mtrx_21);
+                v_alpha_neg_half := r_alpha * C_NEG_HALF;
+                v_beta_pos       := r_beta  * C_POS_SQRT3_HALF;
+                v_beta_neg       := r_beta  * C_NEG_SQRT3_HALF;
 
-                v_ph_raw_a  := resize(v_mtrx_00 + v_mtrx_01, v_ph_raw_a);
-                v_ph_raw_b  := resize(v_mtrx_10 + v_mtrx_11, v_ph_raw_b);
-                v_ph_raw_c  := resize(v_mtrx_20 + v_mtrx_21, v_ph_raw_c);
+                v_phase_b_sum :=
+                    resize(v_alpha_neg_half, t_sum_q32'length) +
+                    resize(v_beta_pos, t_sum_q32'length);
 
-                if v_ph_raw_a > 5.0 then 
-                    v_ph_a  := to_sfixed(5.0, v_ph_a);
-                elsif v_ph_raw_a < -5.0 then 
-                    v_ph_a  := to_sfixed(-5.0, v_ph_a);
-                else
-                    v_ph_a  := resize(v_ph_raw_a, v_ph_a);
-                end if;
+                v_phase_c_sum :=
+                    resize(v_alpha_neg_half, t_sum_q32'length) +
+                    resize(v_beta_neg, t_sum_q32'length);
 
-                if v_ph_raw_b > 5.0 then 
-                    v_ph_b  := to_sfixed(5.0, v_ph_b);
-                elsif v_ph_raw_b < -5.0 then 
-                    v_ph_b  := to_sfixed(-5.0, v_ph_b);
-                else
-                    v_ph_b  := resize(v_ph_raw_b, v_ph_b);
-                end if;
+                o_phases_A <= r_alpha;
+                o_phases_B <= sat_q32_to_q12(v_phase_b_sum);
+                o_phases_C <= sat_q32_to_q12(v_phase_c_sum);
 
-                if v_ph_raw_c > 5.0 then 
-                    v_ph_c  := to_sfixed(5.0, v_ph_c);
-                elsif v_ph_raw_c < -5.0 then 
-                    v_ph_c  := to_sfixed(-5.0, v_ph_c);
-                else
-                    v_ph_c  := resize(v_ph_raw_c, v_ph_c);
-                end if;
-
-                o_inv_clarke.A <= v_ph_a; 
-                o_inv_clarke.B <= v_ph_b; 
-                o_inv_clarke.C <= v_ph_c; 
-                
                 o_vld <= '1';
             else
                 o_vld <= '0';
             end if;
         end if;
-    end process calc_clarke;
+    end process;
+
 end architecture rtl;

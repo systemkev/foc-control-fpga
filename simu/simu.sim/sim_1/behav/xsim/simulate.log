@@ -1,0 +1,75 @@
+Time resolution is 1 ps
+============================================================
+ tb_park_inverse: self-checking inverse Park verification
+ tolerance = 0.0009766 (4.0 Q5.12 LSBs)
+============================================================
+[PASS] inverse Park valid low after reset
+[PASS]                                 zero alpha actual=0.000000 expected=0.000000 err=0.000000
+[PASS]                                  zero beta actual=0.000000 expected=0.000000 err=0.000000
+[PASS] zero -- valid pulse width
+[PASS]                         zero degrees alpha actual=5.000000 expected=5.000000 err=0.000000
+[PASS]                          zero degrees beta actual=-2.000000 expected=-2.000000 err=0.000000
+[PASS] zero degrees -- valid pulse width
+[PASS]                          +90 degrees alpha actual=2.000000 expected=2.000000 err=0.000000
+[PASS]                           +90 degrees beta actual=5.000000 expected=5.000000 err=0.000000
+[PASS] +90 degrees -- valid pulse width
+[PASS]                          -90 degrees alpha actual=-2.000000 expected=-2.000000 err=0.000000
+[PASS]                           -90 degrees beta actual=-5.000000 expected=-5.000000 err=0.000000
+[PASS] -90 degrees -- valid pulse width
+[PASS]                          +45 degrees alpha actual=4.949463 expected=4.949646 err=0.000183
+[PASS]                           +45 degrees beta actual=2.121094 expected=2.121277 err=0.000183
+[PASS] +45 degrees -- valid pulse width
+[PASS]                          +30 degrees alpha actual=6.696045 expected=6.696167 err=0.000122
+[PASS]                           +30 degrees beta actual=0.401855 expected=0.401917 err=0.000061
+[PASS] +30 degrees -- valid pulse width
+[PASS]                          -30 degrees alpha actual=-3.696289 expected=-3.696167 err=0.000122
+[PASS]                           -30 degrees beta actual=5.597900 expected=5.598083 err=0.000183
+[PASS] -30 degrees -- valid pulse width
+[PASS]                          small d LSB alpha actual=0.000244 expected=0.000244 err=0.000000
+[PASS]                           small d LSB beta actual=0.000000 expected=0.000000 err=0.000000
+[PASS] small d LSB -- valid pulse width
+[PASS]            positive alpha saturation alpha actual=0.000000 expected=0.000000 err=0.000000
+[PASS]             positive alpha saturation beta actual=-32.000000 expected=-32.000000 err=0.000000
+[PASS] positive alpha saturation -- valid pulse width
+[PASS]            negative alpha saturation alpha actual=0.000000 expected=0.000000 err=0.000000
+[PASS]             negative alpha saturation beta actual=31.999756 expected=31.999756 err=0.000000
+[PASS] negative alpha saturation -- valid pulse width
+[PASS]             positive beta saturation alpha actual=0.000000 expected=0.000000 err=0.000000
+[PASS]              positive beta saturation beta actual=31.999756 expected=31.999756 err=0.000000
+[PASS] positive beta saturation -- valid pulse width
+[PASS]             negative beta saturation alpha actual=0.000000 expected=0.000000 err=0.000000
+[PASS]              negative beta saturation beta actual=-32.000000 expected=-32.000000 err=0.000000
+[PASS] negative beta saturation -- valid pulse width
+
+--- i_vld gating test ---
+[PASS]                          gating seed alpha actual=3.597900 expected=3.598083 err=0.000183
+[PASS]                           gating seed beta actual=-0.232178 expected=-0.232056 err=0.000122
+[PASS] gating seed -- valid pulse width
+[PASS] no inverse-Park valid without i_vld
+[PASS] alpha holds without valid input
+[PASS] beta holds without valid input
+
+--- Back-to-back throughput test ---
+[PASS]                      back-to-back[0] alpha actual=1.000000 expected=1.000000 err=0.000000
+[PASS]                       back-to-back[0] beta actual=0.000000 expected=0.000000 err=0.000000
+[PASS]                      back-to-back[1] alpha actual=-1.000000 expected=-1.000000 err=0.000000
+[PASS]                       back-to-back[1] beta actual=0.000000 expected=0.000000 err=0.000000
+[PASS]                      back-to-back[2] alpha actual=4.242432 expected=4.242554 err=0.000122
+[PASS]                       back-to-back[2] beta actual=1.414062 expected=1.414185 err=0.000122
+[PASS]                      back-to-back[3] alpha actual=-5.428223 expected=-5.428223 err=0.000000
+[PASS]                       back-to-back[3] beta actual=6.597900 expected=6.598083 err=0.000183
+[PASS]                      back-to-back[4] alpha actual=3.535400 expected=3.535461 err=0.000061
+[PASS]                       back-to-back[4] beta actual=17.677246 expected=17.677307 err=0.000061
+
+--- Reset during pipeline test ---
+[PASS] reset cancels pending inverse-Park valid
+[PASS] reset zeros alpha
+[PASS] reset zeros beta
+
+============================================================
+ tb_park_inverse summary: tests=56 pass=56 fail=0
+============================================================
+RESULT: PASS
+$finish called at time : 550 ns : File "C:/Users/kevin/Desktop/projects/foc/foc-control-fpga/sim/transforms/tb_park_inverse.sv" Line 499
+The current simulation has finished. Please use 'restart' to begin a new simulation.
+$finish called at time : 550 ns : File "C:/Users/kevin/Desktop/projects/foc/foc-control-fpga/sim/transforms/tb_park_inverse.sv" Line 499

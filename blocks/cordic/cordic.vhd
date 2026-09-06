@@ -6,6 +6,7 @@ use IEEE.fixed_pkg.all;
 
 library work;
 use work.math_pkg.all;
+use work.common_pkg.all;
 
 entity cordic is
     port (
@@ -21,8 +22,8 @@ entity cordic is
         
         -- Outputs
         o_vld           : out std_logic;                        
-        o_cos           : out sfixed(1 downto -14);             -- Q1.14 cos output
-        o_sin           : out sfixed(1 downto -14)              -- Q1.14 sin output    
+        o_cos           : out t_sin_cos_outpt;             -- Q1.14 cos output
+        o_sin           : out t_sin_cos_outpt              -- Q1.14 sin output    
     );
 end entity cordic;
 

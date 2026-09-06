@@ -19,6 +19,7 @@ package common_pkg is
     subtype t_angl_position is signed(31 downto 0);
     subtype t_angl_raw_unwr is unsigned(13 downto 0);
     subtype t_cordic_inputs is signed(15 downto 0);
+    subtype t_sin_cos_outpt is sfixed(1 downto -14);
 
     type t_pwm_cnt_phase is record 
         A           : integer range 0 to C_CLKS_IN_PWM_PRD;
