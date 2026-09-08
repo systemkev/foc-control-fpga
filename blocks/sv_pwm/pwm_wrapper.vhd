@@ -23,7 +23,9 @@ entity pwm_3ph_driver is
         i_en        : in std_logic;
 
         -- duty cycle counts from SVPWM module
-        i_abc_cnts  : in t_pwm_cnt_phase;
+        i_abc_cnts_A : in integer range 0 to C_CLKS_IN_PWM_PRD;
+        i_abc_cnts_B : in integer range 0 to C_CLKS_IN_PWM_PRD;
+        i_abc_cnts_C : in integer range 0 to C_CLKS_IN_PWM_PRD;
 
         -- physical outputs to SimpleFOC Shield
         o_pwm_a     : out std_logic;
@@ -56,9 +58,9 @@ architecture rtl of pwm_3ph_driver is
 
 begin
 
-    w_duty_a <= to_unsigned(i_abc_cnts.A, C_PWM_BITS);
-    w_duty_b <= to_unsigned(i_abc_cnts.B, C_PWM_BITS);
-    w_duty_c <= to_unsigned(i_abc_cnts.C, C_PWM_BITS);
+    w_duty_a <= to_unsigned(i_abc_cnts_A, C_PWM_BITS);
+    w_duty_b <= to_unsigned(i_abc_cnts_B, C_PWM_BITS);
+    w_duty_c <= to_unsigned(i_abc_cnts_C, C_PWM_BITS);
 
     ----------------------------------------------------------------------------
     -- PWM Generators

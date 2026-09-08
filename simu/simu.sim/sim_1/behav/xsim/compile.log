@@ -1,4 +1,0 @@
-INFO: [VRFC 10-2263] Analyzing SystemVerilog file "C:/Users/kevin/Desktop/projects/foc/foc-control-fpga/sim/transforms/tb_park_inverse.sv" into library xil_defaultlib
-INFO: [VRFC 10-311] analyzing module tb_park_inverse
-INFO: [VRFC 10-163] Analyzing VHDL file "C:/Users/kevin/Desktop/projects/foc/foc-control-fpga/blocks/transforms/park_inverse.vhd" into library xil_defaultlib
-INFO: [VRFC 10-3107] analyzing entity 'park_inverse'

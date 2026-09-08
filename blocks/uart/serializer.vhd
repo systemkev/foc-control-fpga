@@ -82,7 +82,7 @@ begin
             elsif r_cur_state = ST_SERIALIZE then 
                 o_vld <= '0';
                 
-                if i_rdy = '1' then 
+                if i_rdy = '1' and r_byte_cnt < 8 then
                     o_vld      <= '1';
                     o_byte     <= r_frame(r_byte_cnt);
                     r_byte_cnt <= r_byte_cnt + 1;

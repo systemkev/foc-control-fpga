@@ -97,12 +97,11 @@ begin
                 end if;
 
             when ST_STOP =>
-                if r_baud_tick = '1' and r_rx_tick_cnt = 15 then 
-                    if r_stop_pass = '1' then 
-                        w_nxt_state <= ST_DONE;
-                    else
-                        w_nxt_state <= ST_IDLE;
-                    end if;
+                if r_stop_pass = '1' then
+                    w_nxt_state <= ST_DONE;
+
+                elsif r_baud_tick = '1' and r_rx_tick_cnt = 15 then
+                    w_nxt_state <= ST_IDLE;
                 end if;
 
             when ST_DONE => 
@@ -122,16 +121,18 @@ begin
                 r_baud_tick     <= '0';
             elsif r_cur_state = ST_START or r_cur_state = ST_RUN or r_cur_state = ST_STOP then 
                 r_rx_acc        <= r_rx_acc + C_STEP_INC;
-                r_ovf_flag      <= r_rx_acc(32);
+                r_ovf_flag      <= r_rx_acc(C_ACC_WIDTH);
 
-                if (r_ovf_flag = '1' and r_rx_acc(32) = '0') or 
-                   (r_ovf_flag = '0' and r_rx_acc(32) = '1') then 
+                if (r_ovf_flag = '1' and r_rx_acc(C_ACC_WIDTH) = '0') or 
+                   (r_ovf_flag = '0' and r_rx_acc(C_ACC_WIDTH) = '1') then 
                     r_baud_tick <= '1';
                 else
                     r_baud_tick <= '0';
                 end if;
             else 
-                r_rx_acc        <= (others => '0');
+                r_rx_acc    <= (others => '0');
+                r_ovf_flag  <= '0';
+                r_baud_tick <= '0';
             end if;
         end if;
     end process baud_rate_gen;

@@ -6,10 +6,10 @@ use work.common_pkg.all;
 
 package spi_pkg is
     
-    constant C_READ_ANGLE_CMD   : std_logic_vector(15 downto 0) := x"AAAA";
+    constant C_READ_ANGLE_CMD   : std_logic_vector(15 downto 0) := x"FFFF";
     constant C_CLR_ERR_FL_CMD   : std_logic_vector(15 downto 0) := x"4001";
 
-    constant C_SCLK_FREQ        : real      := 10.0e6;
+    constant C_SCLK_FREQ        : real      := 5.0e6;
     constant C_SCLK_SWTCH_CNT   : natural   := integer(C_CLK_FREQ / C_SCLK_FREQ / 2.0); 
     constant C_WAIT_MAX         : natural   := integer(350.0e-9 / (1.0 / C_CLK_FREQ) + 0.5); -- 350ns wait period needed (+0.5 added for rounding up)
     

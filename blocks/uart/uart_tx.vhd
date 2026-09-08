@@ -46,7 +46,10 @@ architecture rtl of uart_tx is
 begin
 
     o_done  <= '1' when r_cur_state = ST_DONE else '0';
-    o_rdy   <= '1' when r_cur_state = ST_IDLE and i_vld = '0' else '0';
+    o_rdy <= '1' when r_cur_state = ST_IDLE and
+                      r_vld = '0' and
+                      i_vld = '0'
+                else '0';
     
     fsm : process(i_clk)
     begin 
@@ -70,7 +73,7 @@ begin
         case r_cur_state is 
             when ST_IDLE => 
                 if r_vld = '1' then 
-                    w_nxt_state <= ST_START;
+                    w_nxt_state <= ST_RUN;
                 end if;
 
             when ST_RUN => 
@@ -104,7 +107,9 @@ begin
                     r_baud_tick <= '0';
                 end if;
             else 
-                r_rx_acc        <= (others => '0');
+                r_rx_acc    <= (others => '0');
+                r_ovf_flag  <= '0';
+                r_baud_tick <= '0';
             end if;
         end if;
     end process baud_rate_gen;

@@ -1,7 +1,0 @@
-Running: xsim.dir/tb_clarke_inverse_behav/xsimk.exe -simmode gui -wdb tb_clarke_inverse_behav.wdb -simrunnum 0 -socket 54124
-Design successfully loaded
-Design Loading Memory Usage: 19208 KB (Peak: 19208 KB)
-Design Loading CPU Usage: 109 ms
-Simulation completed
-Simulation Memory Usage: 21136 KB (Peak: 21136 KB)
-Simulation CPU Usage: 155 ms

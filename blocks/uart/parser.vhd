@@ -25,7 +25,7 @@ architecture rtl of parser is
     signal r_cur_state : t_uart_parser_states;
     signal w_nxt_state : t_uart_parser_states;
 
-    signal r_ptr  : integer range 0 to 4;
+    signal r_ptr  : integer range 0 to 5;
     signal r_addr : std_logic_vector(7 downto 0);
     signal r_cmd  : std_logic_vector(7 downto 0);
     signal r_data : std_logic_vector(39 downto 0);

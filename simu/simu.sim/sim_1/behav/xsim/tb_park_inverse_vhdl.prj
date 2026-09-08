@@ -1,6 +1,0 @@
-# compile vhdl design source files
-vhdl2008 xil_defaultlib  \
-"../../../../../blocks/transforms/park_inverse.vhd" \
-
-# Do not sort compile order
-nosort

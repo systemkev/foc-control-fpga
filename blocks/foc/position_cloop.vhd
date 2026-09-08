@@ -1,7 +1,6 @@
 library IEEE;
 use IEEE.std_logic_1164.all;
 use IEEE.numeric_std.all;
-use IEEE.fixed_pkg.all;
 use work.common_pkg.all;
 use work.cloop_pkg.all;
 
@@ -21,8 +20,10 @@ entity position_cloop is
         o_omega          : out t_angl_velocity;   -- Commanded 
 
         -- Register file inputs
-        REG_POS_KP_GAIN      : in sfixed(7 downto -24);
-        REG_POS_MAX_VELOCITY : in sfixed(15 downto -16);
+        -- Q7.24
+        REG_POS_KP_GAIN      : in signed(31 downto 0);
+        -- Q15.16
+        REG_POS_MAX_VELOCITY : in signed(31 downto 0);
         REG_POS_DEADBAND_TCK : in unsigned(31 downto 0)
     );
 end entity position_cloop;
@@ -40,7 +41,8 @@ architecture rtl of position_cloop is
     signal r_pos_err    : t_angl_position;
     
     -- Proportional Output stage
-    signal r_omega_raw  : sfixed(31 downto -20);
+    -- Q31.20
+    signal r_omega_raw  : signed(51 downto 0);
     
 begin
 
@@ -93,7 +95,8 @@ begin
             if i_rst = '1' then
                 r_omega_raw <= (others => '0');
             elsif r_vld_pipe(1) = '1' then
-                r_omega_raw <= resize(REG_POS_KP_GAIN * to_sfixed(r_pos_err, 31, 0), r_omega_raw);
+                -- Q31.20
+                r_omega_raw <= resize(shift_right(REG_POS_KP_GAIN * r_pos_err, 4), r_omega_raw'length);
             end if;
         end if;
     end process gains;
@@ -108,12 +111,17 @@ begin
                 o_vld <= r_vld_pipe(2);
                 
                 if r_vld_pipe(2) = '1' then
-                    if r_omega_raw > REG_POS_MAX_VELOCITY then
-                        o_omega <= resize(REG_POS_MAX_VELOCITY, o_omega);
-                    elsif r_omega_raw < -REG_POS_MAX_VELOCITY then
-                        o_omega <= resize(-REG_POS_MAX_VELOCITY, o_omega);
+                    -- Q31.20
+                    if r_omega_raw > shift_left(resize(REG_POS_MAX_VELOCITY, r_omega_raw'length), 4) then
+                        -- Q8.20
+                        o_omega <= resize(shift_left(resize(REG_POS_MAX_VELOCITY, r_omega_raw'length), 4), o_omega'length);
+                    -- Q31.20
+                    elsif r_omega_raw < -shift_left(resize(REG_POS_MAX_VELOCITY, r_omega_raw'length), 4) then
+                        -- Q8.20
+                        o_omega <= resize(-shift_left(resize(REG_POS_MAX_VELOCITY, r_omega_raw'length), 4), o_omega'length);
                     else
-                        o_omega <= resize(r_omega_raw, o_omega);
+                        -- Q8.20
+                        o_omega <= resize(r_omega_raw, o_omega'length);
                     end if;
                 end if;
             end if;
