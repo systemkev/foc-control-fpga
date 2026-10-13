@@ -251,6 +251,17 @@ architecture rtl of motor_controller_top is
     signal r_vel_current_max_cfg : std_logic_vector(31 downto 0) := (others => '0');
     signal r_current_limit_q12    : t_current_q12 := (others => '0');
 
+    -- Outer-loop scheduler.  w_tracker_vld arrives once per 20 kHz encoder
+    -- transaction, so counting tracker-valid events keeps the outer loops
+    -- synchronized to the PWM/sample domain rather than the 100 MHz clock.
+    --
+    --   current loop  : every sample      = 20 kHz
+    --   velocity loop : every 5 samples   =  4 kHz
+    --   position loop : every 20 samples  =  1 kHz
+    signal r_outer_phase        : natural range 0 to 19 := 0;
+    signal r_vel_tick           : std_logic := '0';
+    signal r_pos_tick           : std_logic := '0';
+
 
     ---------------------------------------------------------------------------
     -- Inner current loop / voltage path
@@ -698,13 +709,57 @@ begin
 
 
     ---------------------------------------------------------------------------
+    -- Outer-loop scheduler
+    --
+    -- Position launches at phase 0, once every 20 tracker samples (1 kHz).
+    -- Velocity launches at phases 1, 6, 11 and 16, once every 5 samples
+    -- (4 kHz).  The one-sample offset gives the position pipeline ample time
+    -- to publish a new w_pos_omega before the next velocity transaction.
+    ---------------------------------------------------------------------------
+    outer_loop_scheduler : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst = '1' or w_drive_en = '0' then
+                r_outer_phase <= 0;
+                r_vel_tick    <= '0';
+                r_pos_tick    <= '0';
+            else
+                -- Default low so each enable is exactly one system clock wide.
+                r_vel_tick <= '0';
+                r_pos_tick <= '0';
+
+                -- Advance only when a new tracker sample is available.
+                if w_tracker_vld = '1' then
+                    if r_outer_phase = 0 then
+                        r_pos_tick <= '1';
+                    end if;
+
+                    if r_outer_phase = 1 or
+                       r_outer_phase = 6 or
+                       r_outer_phase = 11 or
+                       r_outer_phase = 16 then
+                        r_vel_tick <= '1';
+                    end if;
+
+                    if r_outer_phase = 19 then
+                        r_outer_phase <= 0;
+                    else
+                        r_outer_phase <= r_outer_phase + 1;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process outer_loop_scheduler;
+
+
+    ---------------------------------------------------------------------------
     -- Position loop
     ---------------------------------------------------------------------------
     u_position_cloop : entity work.position_cloop
         port map (
             i_clk                => i_clk,
             i_rst                => r_position_rst,
-            i_vld                => w_tracker_vld,
+            i_vld                => r_pos_tick,
             i_target_pos         => signed(REG_TARGET_POS),
             i_actual_pos         => w_actual_pos,
             o_vld                => w_pos_vld,
@@ -724,8 +779,11 @@ begin
     -- Q8.20
     w_target_vel_reg <= signed(REG_TARGET_VEL(28 downto 0));
 
-    w_vel_loop_vld <= w_pos_vld when w_mode = C_MODE_POSITION
-                      else w_tracker_vld when w_mode = C_MODE_VELOCITY
+    -- Run the velocity PI at 4 kHz in either velocity or position mode.
+    -- In position mode w_pos_omega is held between the 1 kHz position updates.
+    w_vel_loop_vld <= r_vel_tick
+                      when (w_mode = C_MODE_POSITION or
+                            w_mode = C_MODE_VELOCITY)
                       else '0';
 
     w_vel_target <= w_pos_omega when w_mode = C_MODE_POSITION
